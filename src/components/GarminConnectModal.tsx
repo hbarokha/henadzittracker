@@ -7,7 +7,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Step = "credentials" | "mfa";
+type Step = "credentials" | "mfa" | "cloud";
 
 export default function GarminConnectModal({ onConnected, onClose }: Props) {
   const [step, setStep] = useState<Step>("credentials");
@@ -31,6 +31,8 @@ export default function GarminConnectModal({ onConnected, onClose }: Props) {
     setLoading(false);
     if (data.ok) {
       onConnected();
+    } else if (data.cloudHosted) {
+      setStep("cloud");
     } else if (data.needsMFA) {
       setStep("mfa");
     } else {
@@ -78,7 +80,43 @@ export default function GarminConnectModal({ onConnected, onClose }: Props) {
         </div>
 
         <div className="p-6 space-y-4">
-          {step === "credentials" ? (
+          {step === "cloud" ? (
+            <>
+              <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
+                <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                <p className="text-amber-300 text-sm leading-relaxed">
+                  Garmin&apos;s login is blocked from cloud IPs. You need to authenticate once from your local machine — tokens are saved to Azure Blob and work here automatically.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                {[
+                  { n: "1", text: "Add to your local .env.local file:", code: "AZURE_STORAGE_CONNECTION_STRING=<your connection string>\nAZURE_STORAGE_CONTAINER=henadzittracker" },
+                  { n: "2", text: "Run the app locally:", code: "npm run dev" },
+                  { n: "3", text: "Open localhost:3000, connect Garmin — done. Tokens are written to blob storage and this site will pick them up automatically.", code: null },
+                ].map(({ n, text, code }) => (
+                  <div key={n} className="flex gap-3">
+                    <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">{n}</span>
+                    <div className="space-y-1.5">
+                      <p className="text-sm text-gray-300">{text}</p>
+                      {code && (
+                        <pre className="text-xs bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-gray-300 font-mono whitespace-pre-wrap">{code}</pre>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={onClose}
+                className="w-full py-2.5 rounded-xl bg-gray-700 hover:bg-gray-600 text-gray-300 font-semibold text-sm transition-colors"
+              >
+                Got it
+              </button>
+            </>
+          ) : step === "credentials" ? (
             <>
               <p className="text-gray-400 text-sm">
                 Enter your <span className="text-white font-medium">Garmin Connect</span> credentials. They&apos;re sent only to your local server and stored as session tokens — never in plaintext.
