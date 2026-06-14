@@ -1,0 +1,33 @@
+import { NextResponse } from "next/server";
+import { getAllSupplements, addSupplement, getLogForDate, setTaken, updateSupplement } from "@/lib/supplements";
+
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const date = searchParams.get("date");
+  if (date) {
+    const [supplements, log] = await Promise.all([getAllSupplements(), getLogForDate(date)]);
+    return NextResponse.json({ supplements, log });
+  }
+  return NextResponse.json(await getAllSupplements());
+}
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  if (body.action === "taken") {
+    await setTaken(body.supplementId, body.date, body.taken);
+    return NextResponse.json({ ok: true });
+  }
+  if (body.action === "update") {
+    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, dose: body.dose, unit: body.unit, timeOfDay: body.timeOfDay });
+    return NextResponse.json({ ok: true });
+  }
+  const entry = await addSupplement({
+    name: body.name,
+    dose: Number(body.dose),
+    unit: body.unit,
+    timeOfDay: body.timeOfDay,
+    description: body.description,
+    usageTip: body.usageTip,
+  });
+  return NextResponse.json(entry);
+}

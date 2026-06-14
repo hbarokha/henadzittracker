@@ -1,0 +1,220 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Custom Properties ──────────────────────────────────────────────── */
+:root {
+  --font-sans:    'DM Sans',    system-ui, sans-serif;
+  --font-display: 'Syne',       system-ui, sans-serif;
+  --font-mono:    'DM Mono',    monospace;
+  --font-hero:    'Bebas Neue', system-ui, sans-serif;
+
+  /* Warm dark palette */
+  --bg:           #0C0A08;
+  --bg-surface:   #141210;
+  --bg-raised:    #1E1A17;
+  --bg-high:      #2A2420;
+  --border:       #2A2420;
+  --border-dim:   #1E1A17;
+  --border-mid:   #3D3530;
+
+  /* Text */
+  --text:         #E8DDD4;
+  --text-sec:     #B0A090;
+  --text-muted:   #8A7A6E;
+  --text-dim:     #5C5248;
+
+  /* Accents */
+  --amber:        #F5A623;
+  --amber-dim:    rgba(245, 166, 35, 0.12);
+  --amber-glow:   rgba(245, 166, 35, 0.22);
+  --mint:         #2DD4BF;
+  --mint-dim:     rgba(45, 212, 191, 0.10);
+  --coral:        #FF6B6B;
+  --coral-dim:    rgba(255, 107, 107, 0.12);
+  --sage:         #6ECD8E;
+  --sage-dim:     rgba(110, 205, 142, 0.12);
+  --sky:          #60A5FA;
+  --sky-dim:      rgba(96, 165, 250, 0.10);
+  --violet:       #A78BFA;
+  --violet-dim:   rgba(167, 139, 250, 0.10);
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Subtle dot grid texture */
+    background-image: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 24px 24px;
+    min-height: 100vh;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+}
+
+/* ── Typography utilities ───────────────────────────────────────────────── */
+@layer utilities {
+  .font-hero     { font-family: var(--font-hero); letter-spacing: 0.02em; }
+  .font-display  { font-family: var(--font-display); }
+  .font-data     { font-family: var(--font-mono); }
+
+  .tabular       { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+
+  /* Section label — rotated track labels */
+  .label-track {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* Divider with label */
+  .section-rule {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-dim);
+  }
+  .section-rule::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Glow effects */
+  .glow-amber { text-shadow: 0 0 20px rgba(245, 166, 35, 0.4); }
+  .glow-mint  { text-shadow: 0 0 20px rgba(45, 212, 191, 0.4); }
+  .glow-coral { text-shadow: 0 0 20px rgba(255, 107, 107, 0.4); }
+
+  /* Amber accent border */
+  .border-accent { border-color: var(--amber) !important; }
+}
+
+/* ── Component overrides — transform legacy light components to dark ─────── */
+@layer components {
+
+  /* Cards */
+  .bg-white,
+  .bg-stone-50,
+  .bg-gray-50 {
+    background-color: var(--bg-surface) !important;
+    color: var(--text) !important;
+  }
+
+  /* Light borders */
+  .border-gray-100,
+  .border-gray-200 {
+    border-color: var(--border-dim) !important;
+  }
+
+  /* Gray text remapping */
+  .text-gray-900 { color: var(--text) !important; }
+  .text-gray-800 { color: var(--text) !important; }
+  .text-gray-700 { color: var(--text-sec) !important; }
+  .text-gray-600 { color: var(--text-sec) !important; }
+  .text-gray-500 { color: var(--text-muted) !important; }
+  .text-gray-400 { color: var(--text-muted) !important; }
+  .text-gray-300 { color: var(--text-dim) !important; }
+
+  /* Light backgrounds used in macro cards */
+  .bg-blue-50   { background-color: rgba(96, 165, 250, 0.08) !important; }
+  .bg-amber-50  { background-color: rgba(245, 166, 35, 0.08) !important; }
+  .bg-rose-50   { background-color: rgba(255, 107, 107, 0.08) !important; }
+  .bg-green-50,
+  .bg-emerald-50 { background-color: rgba(110, 205, 142, 0.08) !important; }
+  .bg-purple-50 { background-color: rgba(167, 139, 250, 0.08) !important; }
+  .bg-teal-50   { background-color: rgba(45, 212, 191, 0.08) !important; }
+  .bg-sky-50    { background-color: rgba(96, 165, 250, 0.08) !important; }
+
+  /* Light text on those macro cards */
+  .text-blue-700   { color: var(--sky) !important; }
+  .text-amber-700  { color: var(--amber) !important; }
+  .text-rose-700   { color: var(--coral) !important; }
+  .text-emerald-700 { color: var(--sage) !important; }
+  .text-purple-700 { color: var(--violet) !important; }
+  .text-green-700  { color: var(--sage) !important; }
+  .text-teal-700   { color: var(--mint) !important; }
+
+  /* Track backgrounds for progress bars */
+  .bg-gray-100,
+  .bg-gray-200 {
+    background-color: var(--bg-high) !important;
+  }
+
+  /* White dividers in macro row */
+  .border-white {
+    border-color: var(--border) !important;
+  }
+
+  /* Shadow overrides */
+  .shadow-sm { box-shadow: none !important; }
+  .shadow    { box-shadow: 0 1px 12px rgba(0,0,0,0.4) !important; }
+
+  /* Input / form overrides */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  select,
+  textarea {
+    background-color: var(--bg-raised) !important;
+    color: var(--text) !important;
+    border-color: var(--border-mid) !important;
+  }
+  input::placeholder,
+  textarea::placeholder { color: var(--text-dim) !important; }
+
+  /* Rounded card universal */
+  .rounded-2xl {
+    border-radius: 12px;
+  }
+
+  /* Emerald accent → amber brand color */
+  .text-emerald-400,
+  .text-emerald-500 { color: var(--amber) !important; }
+  .text-emerald-600 { color: var(--amber) !important; }
+  .bg-emerald-500   { background-color: var(--amber) !important; }
+  .border-emerald-500 { border-color: var(--amber) !important; }
+  .bg-emerald-500\/20 { background-color: var(--amber-dim) !important; }
+  .text-emerald-300 { color: color-mix(in srgb, var(--amber) 80%, white) !important; }
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-surface); }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+/* ── Selection ──────────────────────────────────────────────────────────── */
+::selection {
+  background: var(--amber-dim);
+  color: var(--amber);
+}
+
+/* ── Modal backdrop ─────────────────────────────────────────────────────── */
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+  background-color: rgba(12, 10, 8, 0.75);
+}
+
+/* ── Staggered animation delays ─────────────────────────────────────────── */
+.delay-0   { animation-delay: 0ms; }
+.delay-50  { animation-delay: 50ms; }
+.delay-100 { animation-delay: 100ms; }
+.delay-150 { animation-delay: 150ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+.delay-400 { animation-delay: 400ms; }

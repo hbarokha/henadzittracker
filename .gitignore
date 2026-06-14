@@ -1,0 +1,77 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+.eggs/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+*.swo
+
+# Testing
+coverage/
+.nyc_output/
+
+# Next.js
+.next/
+out/
+
+# Local database
+data/
+
+# Misc
+*.pem
+*.key
+
+# Claude Code / tooling artifacts
+.claude/
+.agents/
+.playwright-mcp/
+skills-lock.json
+
+# Dev server output logs
+dev-out.txt
+dev-err.txt
+
+# Screenshot artifacts from testing
+*.png
+*.jpg
