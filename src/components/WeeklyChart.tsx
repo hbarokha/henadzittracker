@@ -28,7 +28,7 @@ function barColor(cal: number, goal: number): string {
 
 export default function WeeklyChart({ week, goal, today }: Props) {
   const maxCal = Math.max(...week.map((d) => d.calories), goal * 1.1);
-  const BAR_H  = 80;
+  const BAR_H  = 104;
 
   return (
     <div

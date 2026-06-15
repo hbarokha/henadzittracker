@@ -105,18 +105,20 @@ export default function DailySummary({ totals, goals }: Props) {
             })}
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span
-              className="text-4xl leading-none"
-              style={{ fontFamily: "var(--font-hero)", color }}
-            >
-              {Math.round(calPct * 100)}
-            </span>
-            <span
-              className="text-[8px] tracking-[0.18em] mt-0.5"
-              style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}
-            >
-              PCT
-            </span>
+            <div className="flex items-end gap-0.5">
+              <span
+                className="text-4xl leading-none"
+                style={{ fontFamily: "var(--font-hero)", color }}
+              >
+                {Math.round(calPct * 100)}
+              </span>
+              <span
+                className="text-lg leading-none mb-0.5"
+                style={{ fontFamily: "var(--font-hero)", color }}
+              >
+                %
+              </span>
+            </div>
           </div>
         </div>
 

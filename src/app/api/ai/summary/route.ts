@@ -150,7 +150,7 @@ export async function POST(req: Request) {
     const cached = readSummaryCache(date);
     if (cached) {
       const age = Date.now() - new Date(cached.generatedAt).getTime();
-      if (age < 6 * 60 * 60 * 1000) {
+      if (age < 12 * 60 * 60 * 1000) {
         return NextResponse.json(Object.assign({}, cached.data as object, { cached: true, cachedAt: cached.generatedAt }));
       }
     }

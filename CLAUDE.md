@@ -89,6 +89,13 @@ the official developer program is currently suspended as of 2024).
 - Body weight log — track weight over time with trend line
 - BMI calculated and displayed with healthy-range indicator
 
+### AI Health Summary
+- Auto-generates on page load via Gemini — no button press required
+- Covers today, last 7 days, and last 30 days with per-period health scores (1–10)
+- Highlights, concerns, and 3–6 prioritized recommendations per analysis
+- Persisted to `data/summary-cache/YYYY-MM-DD.json`; auto-regenerates if cache is older than 12 hours
+- Manual ↺ Refresh button available to force a fresh generation at any time
+
 ### General
 - Navigate between past days with ← → arrows to review any day's log
 - 7-day calorie history bar chart with goal line
@@ -221,6 +228,8 @@ data/
     YYYY-MM-DD-spo2.json            Cached SpO2 data per date
     YYYY-MM-DD-respiration.json     Cached respiration data per date
     YYYY-MM-DD-epochs.json          Cached 15-min epoch data per date
+  summary-cache/
+    YYYY-MM-DD.json                 Persisted AI health summary — auto-regenerates if older than 12h
   weight.json                       Body weight log (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
@@ -473,3 +482,5 @@ Activity multipliers:
 - [x] Export log to CSV
 - [x] Custom quantity per entry (1–20 stepper)
 - [x] **MERIDIAN redesign** — warm dark theme, Bebas Neue/Syne/DM Mono typography, full CSS variable design system, mobile date navigation
+- [x] **AI health summary** — auto-generates on load, 12h cache persistence, per-period scores + recommendations
+- [x] **Design system consistency** — global CSS overrides unify all components (Garmin, HealthSummary, Weight, Supplement) to warm dark palette

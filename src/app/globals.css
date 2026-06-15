@@ -189,7 +189,32 @@
   .bg-emerald-500   { background-color: var(--amber) !important; }
   .border-emerald-500 { border-color: var(--amber) !important; }
   .bg-emerald-500\/20 { background-color: var(--amber-dim) !important; }
+  .border-emerald-500\/30 { border-color: var(--amber-glow) !important; }
   .text-emerald-300 { color: color-mix(in srgb, var(--amber) 80%, white) !important; }
+
+  /* ── Warm-dark overrides for gray backgrounds ──────────────────────────── */
+  /* Full-opacity grays used in WeightChart, ProfilePanel, SupplementLog, etc. */
+  .bg-gray-950 { background-color: var(--bg) !important; }
+  .bg-gray-900 { background-color: var(--bg-surface) !important; }
+  .bg-gray-800 { background-color: var(--bg-raised) !important; }
+  .bg-gray-700 { background-color: var(--bg-high) !important; }
+
+  .border-gray-700  { border-color: var(--border) !important; }
+  .border-gray-800  { border-color: var(--border-dim) !important; }
+  .border-gray-600  { border-color: var(--border-mid) !important; }
+  .border-gray-700\/50 { border-color: var(--border) !important; }
+
+  /* Opacity-modifier variants — each generates its own selector.
+     Hierarchy: bg-surface (outer) → bg-raised (inner panel) → bg-high (stat cells) */
+  .bg-gray-900\/60,
+  .bg-gray-900\/50 { background-color: var(--bg-surface) !important; }
+  .bg-gray-900\/30 { background-color: var(--bg) !important; }
+  .bg-gray-800\/60,
+  .bg-gray-800\/50,
+  .bg-gray-800\/40 { background-color: var(--bg-raised) !important; }
+  .bg-gray-700\/60,
+  .bg-gray-700\/50,
+  .bg-gray-700\/40 { background-color: var(--bg-high) !important; }
 }
 
 /* ── Scrollbar ──────────────────────────────────────────────────────────── */

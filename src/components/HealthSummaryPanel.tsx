@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 interface SummarySection {
   score: number;
@@ -173,7 +173,7 @@ function SectionCard({
 
 export default function HealthSummaryPanel({ date }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recsOpen, setRecsOpen] = useState(true);
 
@@ -195,6 +195,12 @@ export default function HealthSummaryPanel({ date }: Props) {
       setLoading(false);
     }
   }, [date]);
+
+  useEffect(() => {
+    setSummary(null);
+    setError(null);
+    generate(false);
+  }, [generate]);
 
   // Compute overall score from the three sections
   const overallScore = summary
