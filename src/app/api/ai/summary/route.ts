@@ -1,20 +1,14 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { getAllEntries, type DbEntry } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getAllSupplements, getLogForDate } from "@/lib/supplements";
 import { getRecentWeightEntries } from "@/lib/weight-db";
-
-const CACHE_DIR = path.join(process.cwd(), "data", "garmin-cache");
-const SUMMARY_CACHE_DIR = path.join(process.cwd(), "data", "summary-cache");
+import { readJson, writeJson } from "@/lib/storage";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function readGarminCache<T>(date: string, key: string): T | null {
-  const p = path.join(CACHE_DIR, `${date}-${key}.json`);
-  if (!fs.existsSync(p)) return null;
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return null; }
+async function readGarminCache<T>(date: string, key: string): Promise<T | null> {
+  return readJson<T>(`garmin-cache/${date}-${key}.json`);
 }
 
 function shiftDate(iso: string, days: number): string {
@@ -74,18 +68,30 @@ interface DaySnapshot {
   bodybattery: any;
 }
 
-function buildSnapshots(dates: string[], allEntries: DbEntry[]): DaySnapshot[] {
+async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<DaySnapshot[]> {
   const food = aggregateFood(allEntries, dates);
-  return dates.map((d) => ({
-    date: d,
-    food: food[d] ?? null,
-    daily: readGarminCache(d, "daily"),
-    sleep: readGarminCache(d, "sleep"),
-    hrv: readGarminCache(d, "hrv"),
-    activities: readGarminCache<unknown[]>(d, "activities") ?? [],
-    stress: readGarminCache(d, "stress"),
-    bodybattery: readGarminCache(d, "bodybattery"),
-  }));
+  return Promise.all(
+    dates.map(async (d) => {
+      const [daily, sleep, hrv, activities, stress, bodybattery] = await Promise.all([
+        readGarminCache(d, "daily"),
+        readGarminCache(d, "sleep"),
+        readGarminCache(d, "hrv"),
+        readGarminCache<unknown[]>(d, "activities"),
+        readGarminCache(d, "stress"),
+        readGarminCache(d, "bodybattery"),
+      ]);
+      return {
+        date: d,
+        food: food[d] ?? null,
+        daily,
+        sleep,
+        hrv,
+        activities: activities ?? [],
+        stress,
+        bodybattery,
+      };
+    })
+  );
 }
 
 function summarizePeriod(snaps: DaySnapshot[]) {
@@ -124,16 +130,12 @@ interface CachedSummary {
   data: unknown;
 }
 
-function readSummaryCache(date: string): CachedSummary | null {
-  fs.mkdirSync(SUMMARY_CACHE_DIR, { recursive: true });
-  const p = path.join(SUMMARY_CACHE_DIR, `${date}.json`);
-  if (!fs.existsSync(p)) return null;
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return null; }
+async function readSummaryCache(date: string): Promise<CachedSummary | null> {
+  return readJson<CachedSummary>(`summary-cache/${date}.json`);
 }
 
-function writeSummaryCache(date: string, data: unknown) {
-  fs.mkdirSync(SUMMARY_CACHE_DIR, { recursive: true });
-  fs.writeFileSync(path.join(SUMMARY_CACHE_DIR, `${date}.json`), JSON.stringify({ generatedAt: new Date().toISOString(), data }));
+async function writeSummaryCache(date: string, data: unknown): Promise<void> {
+  await writeJson(`summary-cache/${date}.json`, { generatedAt: new Date().toISOString(), data });
 }
 
 // ── route ─────────────────────────────────────────────────────────────────────
@@ -147,7 +149,7 @@ export async function POST(req: Request) {
 
   // Return cached result for the same day unless forced
   if (!force) {
-    const cached = readSummaryCache(date);
+    const cached = await readSummaryCache(date);
     if (cached) {
       const age = Date.now() - new Date(cached.generatedAt).getTime();
       if (age < 12 * 60 * 60 * 1000) {
@@ -174,11 +176,14 @@ export async function POST(req: Request) {
   const tdee         = profile ? calculateTDEE(profile) : null;
   const suppTaken    = suppLog.filter((l) => l.taken).length;
 
-  const todaySnap  = buildSnapshots([today], allEntries)[0];
-  const weekSnaps  = buildSnapshots(weekDates, allEntries);
-  const monSnaps   = buildSnapshots(monDates, allEntries);
-  const weekSum    = summarizePeriod(weekSnaps);
-  const monSum     = summarizePeriod(monSnaps);
+  const [todaySnaps, weekSnaps, monSnaps] = await Promise.all([
+    buildSnapshots([today], allEntries),
+    buildSnapshots(weekDates, allEntries),
+    buildSnapshots(monDates, allEntries),
+  ]);
+  const todaySnap = todaySnaps[0];
+  const weekSum   = summarizePeriod(weekSnaps);
+  const monSum    = summarizePeriod(monSnaps);
 
   // Today's meals breakdown
   const todayMeals = allEntries
@@ -320,7 +325,7 @@ Rules:
     if (!text) return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
 
     const result = JSON.parse(text);
-    writeSummaryCache(date, result);
+    await writeSummaryCache(date, result);
     return NextResponse.json({ ...result, cached: false });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
