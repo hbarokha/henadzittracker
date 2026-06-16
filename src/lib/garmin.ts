@@ -666,8 +666,10 @@ export async function fetchHRV(date: string): Promise<GarminHRV | null> {
   const gc = await getClient();
   if (!gc) return readCache<GarminHRV>(date, "hrv");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminHRV>(date, "hrv");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/hrv-service/hrv`, { params: { date } });
+    const raw: any = await gc.get(`${GC_API}/hrv-service/hrv/${displayName}`, { params: { date } });
     const s = raw?.hrvSummary;
     const result: GarminHRV = {
       date,
@@ -701,8 +703,10 @@ export async function fetchStressData(date: string): Promise<GarminStress | null
   const gc = await getClient();
   if (!gc) return readCache<GarminStress>(date, "stress");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminStress>(date, "stress");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyStress`, { params: { date } });
+    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyStress/${displayName}`, { params: { date } });
     const vals: Array<[number, number]> = Array.isArray(raw?.stressValuesArray)
       ? raw.stressValuesArray.filter((p: [number, number]) => p[1] >= 0)
       : null;
@@ -746,8 +750,10 @@ export async function fetchBodyBattery(date: string): Promise<GarminBodyBattery 
   const gc = await getClient();
   if (!gc) return readCache<GarminBodyBattery>(date, "bodybattery");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminBodyBattery>(date, "bodybattery");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyBodyBattery`, {
+    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyBodyBattery/${displayName}`, {
       params: { startDate: date, endDate: date },
     });
     const entry = Array.isArray(raw) ? raw[0] : raw;
@@ -794,8 +800,10 @@ export async function fetchRespiration(date: string): Promise<GarminRespiration 
   const gc = await getClient();
   if (!gc) return readCache<GarminRespiration>(date, "respiration");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminRespiration>(date, "respiration");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyRespiration`, { params: { date } });
+    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyRespiration/${displayName}`, { params: { date } });
     const vals: Array<[number, number]> = Array.isArray(raw?.respirationValuesArray)
       ? raw.respirationValuesArray.filter((p: [number, number]) => p[1] > 0)
       : null;
@@ -829,8 +837,10 @@ export async function fetchSpO2(date: string): Promise<GarminSpO2 | null> {
   const gc = await getClient();
   if (!gc) return readCache<GarminSpO2>(date, "spo2");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminSpO2>(date, "spo2");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyPulseOx`, { params: { date } });
+    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/dailyPulseOx/${displayName}`, { params: { date } });
     const result: GarminSpO2 = {
       date,
       average: raw?.averageSpO2 ?? null,
@@ -865,8 +875,10 @@ export async function fetchEpochs(date: string): Promise<GarminEpochs | null> {
   const gc = await getClient();
   if (!gc) return readCache<GarminEpochs>(date, "epochs");
   try {
+    const displayName = await getDisplayName(gc);
+    if (!displayName) return readCache<GarminEpochs>(date, "epochs");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/epochSummary`, {
+    const raw: any = await gc.get(`${GC_API}/wellness-service/wellness/epochSummary/${displayName}`, {
       params: { startDate: date, endDate: date },
     });
     const arr: any[] = Array.isArray(raw) ? raw : [];
