@@ -8,7 +8,8 @@ import { readJson } from "@/lib/storage";
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 
 const SUPP_SCHEMA = `{
-  "name": "string — exact supplement name",
+  "name": "string — exact supplement name (no brand prefix)",
+  "brand": "string|null — brand name if known from label or context, otherwise null",
   "dose": "number — typical recommended dose",
   "unit": "mg|mcg|IU|g",
   "timeOfDay": "morning|afternoon|evening|any",
@@ -126,7 +127,7 @@ Rules:
       const avgFat     = avgN(days.map((d) => d.fat));
 
       const latestWeight = weightRows[weightRows.length - 1]?.weightKg ?? null;
-      const existing = allSupps.map((s) => `${s.name} ${s.dose}${s.unit} (${s.timeOfDay})`);
+      const existing = allSupps.map((s) => `${[s.brand, s.name].filter(Boolean).join(" ")} ${s.dose}${s.unit}${s.pills && s.pills > 1 ? ` × ${s.pills}` : ""} (${s.timeOfDay})`);
 
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
 

@@ -148,25 +148,46 @@ interface CachedSummary {
   data: unknown;
 }
 
-async function readSummaryCache(date: string): Promise<CachedSummary | null> {
-  return readJson<CachedSummary>(`summary-cache/${date}.json`);
+type TimeBracket = "morning" | "afternoon" | "evening" | "night";
+
+function timeBracketFromHour(h: number): TimeBracket {
+  if (h >= 5  && h < 12) return "morning";
+  if (h >= 12 && h < 18) return "afternoon";
+  if (h >= 18 && h < 23) return "evening";
+  return "night";
 }
 
-async function writeSummaryCache(date: string, data: unknown): Promise<void> {
-  await writeJson(`summary-cache/${date}.json`, { generatedAt: new Date().toISOString(), data });
+async function readSummaryCache(date: string, bracket: TimeBracket): Promise<CachedSummary | null> {
+  return readJson<CachedSummary>(`summary-cache/${date}-${bracket}.json`);
+}
+
+async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown): Promise<void> {
+  await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data });
 }
 
 // ── route ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
-  const { date, force } = await req.json();
+  const { date, force, time: clientTime } = await req.json();
   if (!date) return NextResponse.json({ error: "date required" }, { status: 400 });
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY not set" }, { status: 500 });
 
+  // Derive time bracket from client-supplied HH:MM, or fall back to server clock
+  const timeStr: string = clientTime ?? `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}`;
+  const bracket: TimeBracket = timeBracketFromHour(parseInt(timeStr.split(":")[0], 10));
+  const dayPct = Math.round((parseInt(timeStr.split(":")[0], 10) * 60 + parseInt(timeStr.split(":")[1] ?? "0", 10)) / 1440 * 100);
+
+  const bracketLabel: Record<TimeBracket, string> = {
+    morning:   "Morning (5 am–noon) — day is just starting; focus on planning and intent",
+    afternoon: "Afternoon (noon–6 pm) — day is underway; course-correct and stay on track",
+    evening:   "Evening (6 pm–11 pm) — day is winding down; consolidate wins, prep for recovery",
+    night:     "Night (11 pm–5 am) — rest period; focus on sleep quality and tomorrow prep",
+  };
+
   if (!force) {
-    const cached = await readSummaryCache(date);
+    const cached = await readSummaryCache(date, bracket);
     if (cached) {
       const age = Date.now() - new Date(cached.generatedAt).getTime();
       if (age < 12 * 60 * 60 * 1000) {
@@ -258,6 +279,10 @@ export async function POST(req: Request) {
 
   const prompt = `You are an expert personal health coach and sports nutritionist with access to comprehensive biometric, nutrition, and activity data. Analyze everything below and provide a thorough, data-driven, personalized assessment.
 
+## CURRENT TIME
+Local time: ${timeStr} | ${bracketLabel[bracket]} | Day ~${dayPct}% complete
+Tailor ALL recommendations to what is still actionable right now. Do not recommend things that are past (e.g. no "eat breakfast" at 8 pm). Today's partial metrics (steps, calories, supplements) reflect only what has happened so far — interpret them in context of time remaining.
+
 ## USER PROFILE
 ${profile
   ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg
@@ -322,7 +347,9 @@ ${supplements.map((s) => {
     const w = weekAdherence[s.id] ?? 0;
     const m = monAdherence[s.id] ?? 0;
     const extra = [s.description, s.usageTip].filter(Boolean).join("; ");
-    return `  - ${s.name} ${s.dose}${s.unit} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${extra ? ` | notes: ${extra}` : ""}`;
+    const label = [s.brand, s.name].filter(Boolean).join(" ");
+    const pillsStr = s.pills && s.pills > 1 ? ` × ${s.pills} pills` : "";
+    return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${extra ? ` | notes: ${extra}` : ""}`;
   }).join("\n")}`
   : "No supplements configured"}
 
@@ -416,7 +443,14 @@ Scoring rules:
 - supplements.interactions: only evidence-based interactions, empty array if none
 - recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
 - Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
-- If Garmin data is missing for a period, say so and base the score on what is available`;
+- If Garmin data is missing for a period, say so and base the score on what is available
+- TIME-AWARE recommendations (current bracket: ${bracket}):${
+  bracket === "morning"   ? " prioritise what to do TODAY — meal plan, workout timing, which supplements to take first, energy management" :
+  bracket === "afternoon" ? " focus on mid-day course corrections — are macros/calories on track, were morning supplements taken, afternoon energy dip strategies" :
+  bracket === "evening"   ? " focus on wind-down — evening supplements, final nutrition close-out, sleep hygiene, tomorrow prep" :
+                            " focus on sleep quality and recovery — overnight supplements, relaxation, readiness for tomorrow"
+}
+- Never suggest actions that are clearly past (no 'eat breakfast' at 9 pm, no 'morning run' at 11 pm)`;
 
   try {
     const resp = await fetch(
@@ -441,7 +475,7 @@ Scoring rules:
     if (!text) return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
 
     const result = JSON.parse(text);
-    await writeSummaryCache(date, result);
+    await writeSummaryCache(date, bracket, result);
     return NextResponse.json({ ...result, cached: false });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

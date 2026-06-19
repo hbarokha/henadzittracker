@@ -18,13 +18,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   if (body.action === "update") {
-    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, dose: body.dose, unit: body.unit, timeOfDay: body.timeOfDay });
+    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: body.timeOfDay });
     return NextResponse.json({ ok: true });
   }
   const entry = await addSupplement({
     name: body.name,
+    brand: body.brand || undefined,
     dose: Number(body.dose),
     unit: body.unit,
+    pills: body.pills ? Number(body.pills) : undefined,
     timeOfDay: body.timeOfDay,
     description: body.description,
     usageTip: body.usageTip,

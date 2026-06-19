@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { Supplement, SupplementLog as SLog, SupplementUnit, TimeOfDay } from "@/lib/supplements";
 import CameraModal from "./CameraModal";
+
+declare class BarcodeDetector {
+  constructor(options?: { formats: string[] });
+  detect(source: HTMLVideoElement | HTMLCanvasElement | ImageBitmap): Promise<Array<{ rawValue: string }>>;
+  static getSupportedFormats(): Promise<string[]>;
+}
+
+const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf"];
 
 interface SupplementWithLog extends Supplement {
   taken: boolean;
@@ -10,6 +18,7 @@ interface SupplementWithLog extends Supplement {
 
 interface AISuggestion {
   name: string;
+  brand?: string;
   dose: number;
   unit: SupplementUnit;
   timeOfDay: TimeOfDay;
@@ -25,7 +34,7 @@ const TIME_COLORS: Record<TimeOfDay, string> = { morning: "text-amber-400", afte
 const TIME_BG: Record<TimeOfDay, string> = { morning: "bg-amber-500/10", afternoon: "bg-sky-500/10", evening: "bg-violet-500/10", any: "bg-gray-700/30" };
 const TIME_CSS_COLORS: Record<TimeOfDay, string> = { morning: "#fbbf24", afternoon: "#38bdf8", evening: "#a78bfa", any: "var(--text-dim)" };
 
-type AddTab = "manual" | "describe" | "photo";
+type AddTab = "manual" | "describe" | "photo" | "barcode";
 
 interface Props { date: string }
 
@@ -60,6 +69,7 @@ function SuggestionCard({ s, onAdd, adding }: {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>{s.name}</p>
+          {s.brand && <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{s.brand}</p>}
           <p className="text-xs" style={{ color: "var(--text-dim)" }}>{s.dose} {s.unit} · {TIME_ICONS[s.timeOfDay]} {TIME_LABELS[s.timeOfDay]}</p>
         </div>
         <button onClick={() => onAdd(s)} disabled={adding}
@@ -88,7 +98,7 @@ export default function SupplementLog({ date }: Props) {
 
   // Manual form
   const [manualForm, setManualForm] = useState({
-    name: "", dose: "", unit: "mg" as SupplementUnit, timeOfDay: "morning" as TimeOfDay,
+    name: "", brand: "", dose: "", unit: "mg" as SupplementUnit, pills: "1", timeOfDay: "morning" as TimeOfDay,
   });
 
   // AI describe tab
@@ -116,6 +126,21 @@ export default function SupplementLog({ date }: Props) {
 
   const [saving, setSaving] = useState(false);
 
+  // Barcode tab
+  const bcVideoRef = useRef<HTMLVideoElement>(null);
+  const bcStreamRef = useRef<MediaStream | null>(null);
+  const bcRafRef = useRef<number>(0);
+  const bcDetectorRef = useRef<BarcodeDetector | null>(null);
+  const [bcPhase, setBcPhase] = useState<"idle" | "scanning" | "loading" | "result" | "error">("idle");
+  const [bcManInput, setBcManInput] = useState("");
+  const [bcScanHint, setBcScanHint] = useState("Point camera at barcode");
+  const [bcError, setBcError] = useState<string | null>(null);
+  const [bcConfirm, setBcConfirm] = useState<{
+    name: string; dose: string; unit: SupplementUnit; pills: string; brand: string | null; image: string | null;
+  } | null>(null);
+  const [bcTimeOfDay, setBcTimeOfDay] = useState<TimeOfDay>("morning");
+  const hasBarcodeDetector = typeof window !== "undefined" && "BarcodeDetector" in window;
+
   // ── data loading ───────────────────────────────────────────────────────────
 
   async function load() {
@@ -126,6 +151,116 @@ export default function SupplementLog({ date }: Props) {
   }
 
   useEffect(() => { load(); }, [date]);
+
+  // ── barcode helpers ────────────────────────────────────────────────────────
+
+  const bcStopCamera = useCallback(() => {
+    cancelAnimationFrame(bcRafRef.current);
+    bcStreamRef.current?.getTracks().forEach(t => t.stop());
+    bcStreamRef.current = null;
+  }, []);
+
+  useEffect(() => () => bcStopCamera(), [bcStopCamera]);
+
+  async function bcLookup(barcode: string) {
+    setBcPhase("loading");
+    setBcError(null);
+    bcStopCamera();
+    try {
+      const res = await fetch(`/api/ai/barcode?supplement=1&barcode=${encodeURIComponent(barcode)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Lookup failed");
+      setBcConfirm({
+        name: data.supplement.name ?? "",
+        dose: data.supplement.dose != null ? String(data.supplement.dose) : "",
+        unit: (data.supplement.unit ?? "mg") as SupplementUnit,
+        pills: "1",
+        brand: data.meta.brand,
+        image: data.meta.image,
+      });
+      setBcTimeOfDay("morning");
+      setBcPhase("result");
+    } catch (err) {
+      setBcError(err instanceof Error ? err.message : "Something went wrong");
+      setBcPhase("error");
+    }
+  }
+
+  async function bcStartCamera() {
+    setBcError(null);
+    setBcScanHint("Point camera at barcode");
+    setBcPhase("scanning");
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+    } catch {
+      setBcError("Camera access denied. Use manual entry instead.");
+      setBcPhase("error");
+      return;
+    }
+    bcStreamRef.current = stream;
+    if (bcVideoRef.current) {
+      bcVideoRef.current.srcObject = stream;
+      await bcVideoRef.current.play();
+    }
+    if (!bcDetectorRef.current) {
+      try {
+        const supported = await BarcodeDetector.getSupportedFormats();
+        const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
+        bcDetectorRef.current = new BarcodeDetector({ formats: formats.length ? formats : BARCODE_FORMATS });
+      } catch {
+        bcDetectorRef.current = new BarcodeDetector({ formats: BARCODE_FORMATS });
+      }
+    }
+    let frameCount = 0;
+    async function detectLoop() {
+      if (!bcVideoRef.current || !bcDetectorRef.current || !bcStreamRef.current) return;
+      frameCount++;
+      if (frameCount % 10 === 0) {
+        try {
+          const codes = await bcDetectorRef.current.detect(bcVideoRef.current);
+          if (codes.length > 0) {
+            setBcScanHint(`Found: ${codes[0].rawValue}`);
+            await bcLookup(codes[0].rawValue);
+            return;
+          }
+        } catch { /* frame not ready */ }
+      }
+      bcRafRef.current = requestAnimationFrame(detectLoop);
+    }
+    bcRafRef.current = requestAnimationFrame(detectLoop);
+  }
+
+  function bcReset() {
+    bcStopCamera();
+    setBcPhase("idle");
+    setBcError(null);
+    setBcConfirm(null);
+    setBcManInput("");
+  }
+
+  async function bcAdd() {
+    if (!bcConfirm || !bcConfirm.name.trim() || !bcConfirm.dose) return;
+    setSaving(true);
+    await fetch("/api/supplements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: bcConfirm.name.trim(),
+        brand: bcConfirm.brand?.trim() || undefined,
+        dose: Number(bcConfirm.dose),
+        unit: bcConfirm.unit,
+        pills: Number(bcConfirm.pills) || 1,
+        timeOfDay: bcTimeOfDay,
+      }),
+    });
+    setSaving(false);
+    bcReset();
+    setShowAdd(false);
+    await load();
+  }
 
   // ── actions ────────────────────────────────────────────────────────────────
 
@@ -144,9 +279,9 @@ export default function SupplementLog({ date }: Props) {
     await fetch("/api/supplements", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: manualForm.name, dose: Number(manualForm.dose), unit: manualForm.unit, timeOfDay: manualForm.timeOfDay }),
+      body: JSON.stringify({ name: manualForm.name, brand: manualForm.brand || undefined, dose: Number(manualForm.dose), unit: manualForm.unit, pills: Number(manualForm.pills) || 1, timeOfDay: manualForm.timeOfDay }),
     });
-    setManualForm({ name: "", dose: "", unit: "mg", timeOfDay: "morning" });
+    setManualForm({ name: "", brand: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
     setShowAdd(false);
     setSaving(false);
     await load();
@@ -159,7 +294,7 @@ export default function SupplementLog({ date }: Props) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: s.name, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
+        name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
         description: s.description, usageTip: s.usageTip,
       }),
     });
@@ -284,7 +419,8 @@ export default function SupplementLog({ date }: Props) {
     setPhotoBase64(null);
     setPhotoSuggestions([]);
     setPhotoError(null);
-    setManualForm({ name: "", dose: "", unit: "mg", timeOfDay: "morning" });
+    setManualForm({ name: "", brand: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
+    bcReset();
   };
 
   // ── render ─────────────────────────────────────────────────────────────────
@@ -343,6 +479,7 @@ export default function SupplementLog({ date }: Props) {
               ["manual", "Manual"],
               ["describe", "✨ Describe"],
               ["photo", "📷 Photo"],
+              ["barcode", "🔲 Scan"],
             ] as [AddTab, string][]).map(([tab, label]) => (
               <button
                 key={tab}
@@ -363,33 +500,63 @@ export default function SupplementLog({ date }: Props) {
           {/* Manual tab */}
           {addTab === "manual" && (
             <div className="p-4 space-y-3">
-              <input
-                value={manualForm.name}
-                onChange={(e) => setManualForm((f) => ({ ...f, name: e.target.value }))}
-                onKeyDown={(e) => e.key === "Enter" && saveManual()}
-                placeholder="Name (e.g. Vitamin D3)"
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-              />
               <div className="grid grid-cols-3 gap-2">
                 <input
-                  type="number"
-                  value={manualForm.dose}
-                  onChange={(e) => setManualForm((f) => ({ ...f, dose: e.target.value }))}
-                  placeholder="Dose"
+                  value={manualForm.name}
+                  onChange={(e) => setManualForm((f) => ({ ...f, name: e.target.value }))}
+                  onKeyDown={(e) => e.key === "Enter" && saveManual()}
+                  placeholder="Name (e.g. Vitamin D3)"
+                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                />
+                <input
+                  value={manualForm.brand}
+                  onChange={(e) => setManualForm((f) => ({ ...f, brand: e.target.value }))}
+                  placeholder="Brand (opt.)"
                   className="rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
                 />
-                <select value={manualForm.unit} onChange={(e) => setManualForm((f) => ({ ...f, unit: e.target.value as SupplementUnit }))}
-                  className="rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                  {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map((u) => <option key={u}>{u}</option>)}
-                </select>
-                <select value={manualForm.timeOfDay} onChange={(e) => setManualForm((f) => ({ ...f, timeOfDay: e.target.value as TimeOfDay }))}
-                  className="rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                  {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
-                </select>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <div className="space-y-1">
+                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Dose</p>
+                  <input
+                    type="number"
+                    value={manualForm.dose}
+                    onChange={(e) => setManualForm((f) => ({ ...f, dose: e.target.value }))}
+                    placeholder="500"
+                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Unit</p>
+                  <select value={manualForm.unit} onChange={(e) => setManualForm((f) => ({ ...f, unit: e.target.value as SupplementUnit }))}
+                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                    {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills</p>
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={manualForm.pills}
+                    onChange={(e) => setManualForm((f) => ({ ...f, pills: e.target.value }))}
+                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
+                  <select value={manualForm.timeOfDay} onChange={(e) => setManualForm((f) => ({ ...f, timeOfDay: e.target.value as TimeOfDay }))}
+                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                    {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="flex gap-2">
                 <button onClick={resetAdd} className="flex-1 py-2 rounded-lg text-sm transition-colors"
@@ -525,6 +692,183 @@ export default function SupplementLog({ date }: Props) {
               )}
             </div>
           )}
+
+          {/* Barcode tab */}
+          {addTab === "barcode" && (
+            <div className="p-4 space-y-3">
+              {/* Result / confirm card */}
+              {bcPhase === "result" && bcConfirm && (
+                <div className="space-y-3">
+                  {bcConfirm.image && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={bcConfirm.image} alt={bcConfirm.name}
+                      className="h-16 mx-auto object-contain rounded-lg"
+                      style={{ background: "var(--bg-high)" }} />
+                  )}
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      value={bcConfirm.name}
+                      onChange={e => setBcConfirm(c => c ? { ...c, name: e.target.value } : c)}
+                      placeholder="Supplement name"
+                      className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                    />
+                    <input
+                      value={bcConfirm.brand ?? ""}
+                      onChange={e => setBcConfirm(c => c ? { ...c, brand: e.target.value } : c)}
+                      placeholder="Brand (opt.)"
+                      className="rounded-lg px-3 py-2 text-sm focus:outline-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Dose</p>
+                      <input
+                        type="number"
+                        value={bcConfirm.dose}
+                        onChange={e => setBcConfirm(c => c ? { ...c, dose: e.target.value } : c)}
+                        placeholder="500"
+                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Unit</p>
+                      <select value={bcConfirm.unit}
+                        onChange={e => setBcConfirm(c => c ? { ...c, unit: e.target.value as SupplementUnit } : c)}
+                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                        {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map(u => <option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills</p>
+                      <input
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={bcConfirm.pills}
+                        onChange={e => setBcConfirm(c => c ? { ...c, pills: e.target.value } : c)}
+                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
+                      <select value={bcTimeOfDay}
+                        onChange={e => setBcTimeOfDay(e.target.value as TimeOfDay)}
+                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
+                        {TIME_ORDER.map(t => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={bcReset}
+                      className="px-3 py-2 rounded-lg text-xs font-semibold"
+                      style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      Scan again
+                    </button>
+                    <button onClick={bcAdd} disabled={saving || !bcConfirm.name.trim() || !bcConfirm.dose}
+                      className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+                      style={{ background: "rgba(52,211,153,0.15)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
+                      {saving ? "Adding…" : "Add"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Camera viewfinder */}
+              {bcPhase === "scanning" && (
+                <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "4/3", background: "#000" }}>
+                  <video ref={bcVideoRef} muted playsInline className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="w-48 h-32 rounded-xl"
+                      style={{ border: "2px solid #a78bfa", boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
+                  </div>
+                  <p className="absolute bottom-3 left-0 right-0 text-center text-xs font-medium"
+                    style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.8)" }}>
+                    {bcScanHint}
+                  </p>
+                  <button onClick={bcReset}
+                    className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+
+              {/* Loading */}
+              {bcPhase === "loading" && (
+                <div className="flex flex-col items-center justify-center py-10 gap-3">
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24" style={{ color: "#a78bfa" }}>
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                  <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                    LOOKING UP PRODUCT…
+                  </p>
+                </div>
+              )}
+
+              {/* Idle / error — scan + manual entry */}
+              {(bcPhase === "idle" || bcPhase === "error") && (
+                <div className="space-y-3">
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Scan a supplement barcode to auto-fill name and dose.
+                  </p>
+                  {hasBarcodeDetector && (
+                    <button onClick={bcStartCamera}
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold"
+                      style={{ fontFamily: "var(--font-display)", background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8H3m2 0h.01M9 20H7m-2 0h.01" />
+                      </svg>
+                      Scan Barcode
+                    </button>
+                  )}
+                  {hasBarcodeDetector && (
+                    <p className="text-[10px] text-center"
+                      style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>— or enter manually —</p>
+                  )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="e.g. 5000157024763"
+                      value={bcManInput}
+                      onChange={e => setBcManInput(e.target.value.replace(/\D/g, ""))}
+                      onKeyDown={e => { if (e.key === "Enter" && bcManInput.length >= 8) bcLookup(bcManInput); }}
+                      className="flex-1 px-3 py-2.5 text-sm focus:outline-none rounded-lg"
+                      style={{ background: "var(--bg-raised)", color: "var(--text)", border: "1px solid var(--border-mid)", fontFamily: "var(--font-mono)" }}
+                    />
+                    <button
+                      onClick={() => bcManInput.length >= 8 && bcLookup(bcManInput)}
+                      disabled={bcManInput.length < 8}
+                      className="px-3 py-2.5 rounded-lg text-sm font-semibold shrink-0 disabled:opacity-40"
+                      style={{
+                        fontFamily: "var(--font-display)",
+                        background: bcManInput.length >= 8 ? "rgba(139,92,246,0.15)" : "var(--bg-raised)",
+                        color: bcManInput.length >= 8 ? "#a78bfa" : "var(--text-dim)",
+                        border: `1px solid ${bcManInput.length >= 8 ? "rgba(139,92,246,0.25)" : "var(--border-mid)"}`,
+                      }}>
+                      Look up
+                    </button>
+                  </div>
+                  {bcError && (
+                    <div className="rounded-lg px-3 py-2.5 text-sm flex items-start gap-2"
+                      style={{ background: "rgba(255,107,107,0.08)", border: "1px solid rgba(255,107,107,0.25)", color: "var(--coral)" }}>
+                      <span className="text-base leading-none mt-0.5">⚠</span>
+                      <span>{bcError}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -599,7 +943,8 @@ export default function SupplementLog({ date }: Props) {
                     fontFamily: "var(--font-display)",
                   }}>{s.name}</p>
                   <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                    {s.dose} {s.unit}
+                    {s.brand ? <span className="uppercase tracking-wide mr-1.5" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
+                    {s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}
                   </p>
                 </div>
 

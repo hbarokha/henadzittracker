@@ -231,7 +231,7 @@ export default function HealthSummaryPanel({ date }: Props) {
       const resp = await fetch("/api/ai/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, force }),
+        body: JSON.stringify({ date, force, time: `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}` }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");

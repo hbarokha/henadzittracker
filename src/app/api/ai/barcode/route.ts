@@ -5,9 +5,18 @@ function num(v: unknown): number {
   return isNaN(n) ? 0 : n;
 }
 
+function normalizeUnit(raw: string): "mg" | "mcg" | "IU" | "g" {
+  const u = raw.toLowerCase().trim();
+  if (u === "iu") return "IU";
+  if (u === "µg" || u === "μg" || u === "mcg") return "mcg";
+  if (u === "g") return "g";
+  return "mg";
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const barcode = searchParams.get("barcode")?.trim();
+  const isSupplementMode = searchParams.get("supplement") === "1";
   if (!barcode) return NextResponse.json({ error: "barcode required" }, { status: 400 });
 
   let res: Response;
@@ -28,6 +37,28 @@ export async function GET(req: Request) {
   }
 
   const p = data.product;
+
+  // ── Supplement mode: return name + parsed dose, no calorie data required ─────
+  if (isSupplementMode) {
+    const rawName = (p.product_name_en ?? p.product_name ?? "").trim();
+    if (!rawName) {
+      return NextResponse.json({ error: "Product not found on Open Food Facts" }, { status: 404 });
+    }
+    const doseMatch = rawName.match(/(\d+(?:\.\d+)?)\s*(mg|mcg|µg|μg|IU|g)\b/i);
+    const parsedDose = doseMatch ? parseFloat(doseMatch[1]) : null;
+    const parsedUnit = doseMatch ? normalizeUnit(doseMatch[2]) : null;
+    const cleanName = doseMatch
+      ? rawName.slice(0, doseMatch.index).trim() || rawName
+      : rawName;
+    return NextResponse.json({
+      supplement: { name: cleanName, dose: parsedDose, unit: parsedUnit },
+      meta: {
+        brand: (p.brands ?? "").split(",")[0].trim() || null,
+        image: p.image_front_small_url ?? null,
+      },
+    });
+  }
+
   const n: Record<string, unknown> = p.nutriments ?? {};
   const servingG = p.serving_quantity ? parseFloat(String(p.serving_quantity)) : null;
 

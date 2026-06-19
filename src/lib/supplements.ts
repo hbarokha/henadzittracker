@@ -6,8 +6,10 @@ export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
 export interface Supplement {
   id: string;
   name: string;
+  brand?: string;
   dose: number;
   unit: SupplementUnit;
+  pills?: number;
   timeOfDay: TimeOfDay;
   active: boolean;
   description?: string;
@@ -51,7 +53,7 @@ export async function addSupplement(s: Omit<Supplement, "id" | "createdAt" | "ac
 
 export async function updateSupplement(
   id: string,
-  patch: Partial<Pick<Supplement, "description" | "usageTip" | "name" | "dose" | "unit" | "timeOfDay">>
+  patch: Partial<Pick<Supplement, "description" | "usageTip" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay">>
 ): Promise<void> {
   const data = await loadData();
   const s = data.supplements.find((x) => x.id === id);
