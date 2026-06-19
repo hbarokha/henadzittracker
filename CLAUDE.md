@@ -6,7 +6,7 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 
 ### Nutrition
 - Describe a meal in plain text → Gemini estimates nutrition for each item
-- Upload a meal photo → Gemini identifies all foods → confirm before logging
+- Upload a meal photo or **take one with the device camera** → Gemini identifies all foods → confirm before logging
 - Scan a product barcode → Open Food Facts lookup → nutrition auto-filled
 - Choose a meal category (Breakfast / Lunch / Dinner / Snack) for every entry
 - Circular calorie ring + full-width calorie progress bar (green → amber → red)
@@ -20,6 +20,8 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 - Supplement library — save custom entries for one-tap logging
 - Track adherence streak per supplement
 - Daily supplement checklist grouped by time of day (Morning / Afternoon / Evening)
+- Add supplements by manual entry, text description (AI), or **photo of bottle/label with live camera support**
+- Per-supplement 7-day and 30-day adherence tracking fed into AI analysis
 
 ### Garmin Connect Integration
 All data is imported via the **unofficial Garmin Connect API** (session-based auth via the `garmin-connect` npm package —
@@ -95,6 +97,8 @@ the official developer program is currently suspended as of 2024).
 - Highlights, concerns, and 3–6 prioritized recommendations per analysis
 - Persisted to `data/summary-cache/YYYY-MM-DD.json`; auto-regenerates if cache is older than 12 hours
 - Manual ↺ Refresh button available to force a fresh generation at any time
+- Dedicated **Supplement Analysis** section: stack assessment, adherence insights, gaps (data-grounded), timing tips, interactions
+- All available data is fed to Gemini: profile (age/sex/weight/BMR/TDEE), VO2 max, body composition, sleep stages + HRV status + 5-day avg HRV, training readiness score, acute/chronic training load, SpO2, respiration rate, intensity minutes vs WHO targets, full workout details (HR, distance, training effect, training load, PRs), body battery charged/drained, stress rest%, supplement adherence rates, weight trend, 7-day nutrition averages
 
 ### General
 - Navigate between past days with ← → arrows to review any day's log
@@ -179,24 +183,24 @@ src/
         summary/route.ts            POST — AI health summary (Gemini)
     globals.css
     layout.tsx
-    page.tsx                        Main page — date nav, goals, streak, chart
+    page.tsx                        3-tab SPA: Overview / Nutrition / Supplements; date nav, goals, streak, TabBar
   components/
-    DailySummary.tsx                Ring + calorie bar + macro cards (goals prop)
+    DailySummary.tsx                Ring + calorie bar + macro cards; compact={true} mode for Overview tab
     WeeklyChart.tsx                 7-day SVG bar chart with goal line
     GoalsModal.tsx                  Settings modal — configure daily macro goals
     AddFoodPanel.tsx                Meal selector + Describe / Photo / Barcode tabs
     AITextTab.tsx                   Free-text → Gemini → per-item add + quantity
-    AIPhotoTab.tsx                  Photo upload → Gemini → checkbox + quantity
+    AIPhotoTab.tsx                  Photo upload or live camera → Gemini → checkbox + quantity
     AIBarcodeTab.tsx                Barcode scan/entry → Open Food Facts → add
     FoodLog.tsx                     Log grouped by meal, CSV export button
     FoodSearch.tsx                  (reserved)
-    HealthSummaryPanel.tsx          AI health summary card (Gemini, all data combined)
+    HealthSummaryPanel.tsx          AI health summary (CSS-variable styled); today/week/month scores + supplement analysis + recommendations
     ProfilePanel.tsx                Age / height / weight / sex / activity + BMR/TDEE
-    SupplementLog.tsx               Daily checklist + library management
-    WeeklyChart.tsx                 7-day SVG bar chart with goal line
+    SupplementLog.tsx               Daily checklist + library; CSS-variable styled; empty state with AI recommendations CTA
     WeightChart.tsx                 Body weight trend line chart
     GarminConnectModal.tsx          Email/password login form + session status
     GarminDashboard.tsx             All Garmin metrics + workout cards (single file)
+    CameraModal.tsx                 Shared live-camera capture modal (getUserMedia); used by AIPhotoTab + SupplementLog
   lib/
     goals.ts                        Goals interface + localStorage load/save
     foods.ts                        (unused — kept for reference)
@@ -204,7 +208,7 @@ src/
     gemini.ts                       Gemini REST wrapper + NutritionFood type
     profile.ts                      UserProfile interface + BMR/TDEE calculations
     garmin.ts                       Session client + all typed fetch helpers + interfaces
-    supplements.ts                  Supplement types + blob/file persistence helpers
+    supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange()
     weight-db.ts                    Body weight blob/file persistence helpers
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
 data/
@@ -228,6 +232,9 @@ data/
     YYYY-MM-DD-spo2.json            Cached SpO2 data per date
     YYYY-MM-DD-respiration.json     Cached respiration data per date
     YYYY-MM-DD-epochs.json          Cached 15-min epoch data per date
+    YYYY-MM-DD-trainingstatus.json  Cached training readiness + acute/chronic load + HR zones per date
+    YYYY-MM-DD-bodycomp.json        Cached Garmin scale body composition per date
+    YYYY-MM-DD-usermetrics.json     Cached VO2 max (running + cycling) per date
   summary-cache/
     YYYY-MM-DD.json                 Persisted AI health summary — auto-regenerates if older than 12h
   weight.json                       Body weight log (git-ignored)
@@ -482,5 +489,9 @@ Activity multipliers:
 - [x] Export log to CSV
 - [x] Custom quantity per entry (1–20 stepper)
 - [x] **MERIDIAN redesign** — warm dark theme, Bebas Neue/Syne/DM Mono typography, full CSS variable design system, mobile date navigation
-- [x] **AI health summary** — auto-generates on load, 12h cache persistence, per-period scores + recommendations
-- [x] **Design system consistency** — global CSS overrides unify all components (Garmin, HealthSummary, Weight, Supplement) to warm dark palette
+- [x] **AI health summary** — auto-generates on load, 12h cache persistence, per-period scores + recommendations; supplement analysis section; all Garmin metrics (VO2 max, training readiness, acute/chronic load, SpO2, respiration, intensity minutes, full workout details, body comp) included in prompt
+- [x] **Camera support** — live `getUserMedia` camera modal for meal photos (AIPhotoTab) and supplement label scanning (SupplementLog photo tab)
+- [x] **Supplement adherence tracking** — per-supplement 7-day and 30-day adherence rates computed and sent to Gemini
+- [x] **Supplement AI recommendations** — now includes full Garmin health context (stress, HRV, sleep, VO2 max, body comp, nutrition averages) for data-grounded suggestions
+- [x] **3-tab mobile layout** — Overview (Garmin + AI analysis), Nutrition (food log + add meal), Supplements; sticky tab bar with amber active indicator; compact DailySummary on Overview, full ring view on Nutrition tab
+- [x] **Design system consistency** — HealthSummaryPanel and SupplementLog fully rewritten to CSS variables; GarminDashboard unified via global `.text-white → var(--text)` override; all gray Tailwind classes mapped to warm-dark palette in globals.css

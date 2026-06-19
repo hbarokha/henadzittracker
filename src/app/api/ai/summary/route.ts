@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAllEntries, type DbEntry } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
-import { getAllSupplements, getLogForDate } from "@/lib/supplements";
+import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson, writeJson } from "@/lib/storage";
 
@@ -66,19 +66,25 @@ interface DaySnapshot {
   stress: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   bodybattery: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  spo2: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  trainingstatus: any;
 }
 
 async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<DaySnapshot[]> {
   const food = aggregateFood(allEntries, dates);
   return Promise.all(
     dates.map(async (d) => {
-      const [daily, sleep, hrv, activities, stress, bodybattery] = await Promise.all([
+      const [daily, sleep, hrv, activities, stress, bodybattery, spo2, trainingstatus] = await Promise.all([
         readGarminCache(d, "daily"),
         readGarminCache(d, "sleep"),
         readGarminCache(d, "hrv"),
         readGarminCache<unknown[]>(d, "activities"),
         readGarminCache(d, "stress"),
         readGarminCache(d, "bodybattery"),
+        readGarminCache(d, "spo2"),
+        readGarminCache(d, "trainingstatus"),
       ]);
       return {
         date: d,
@@ -89,6 +95,8 @@ async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<D
         activities: activities ?? [],
         stress,
         bodybattery,
+        spo2,
+        trainingstatus,
       };
     })
   );
@@ -99,27 +107,37 @@ function summarizePeriod(snaps: DaySnapshot[]) {
   const sleepDays = snaps.filter((s) => s.sleep?.totalSleepSeconds);
   const stepDays  = snaps.filter((s) => s.daily?.steps);
   const allActs   = snaps.flatMap((s) => s.activities ?? []);
+  const actsWithLoad = allActs.filter((a) => a.trainingLoad != null);
   return {
-    daysLogged:       foodDays.length,
-    totalDays:        snaps.length,
-    avgCalories:      avg(foodDays.map((s) => s.food!.calories)),
-    avgProtein:       avg(foodDays.map((s) => s.food!.protein)),
-    avgCarbs:         avg(foodDays.map((s) => s.food!.carbs)),
-    avgFat:           avg(foodDays.map((s) => s.food!.fat)),
-    avgSleepHours:    avg(sleepDays.map((s) => +(s.sleep.totalSleepSeconds / 3600).toFixed(1))),
-    avgSleepScore:    avg(sleepDays.map((s) => s.sleep.sleepScore)),
-    avgDeepMin:       avg(sleepDays.map((s) => Math.round(s.sleep.deepSleepSeconds / 60))),
-    avgRemMin:        avg(sleepDays.map((s) => Math.round(s.sleep.remSleepSeconds / 60))),
-    avgHRV:           avg(snaps.map((s) => s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv)),
-    avgSteps:         avg(stepDays.map((s) => s.daily.steps)),
-    totalActiveCal:   sum(snaps.map((s) => s.daily?.activeCalories)),
-    avgStress:        avg(snaps.map((s) => s.stress?.avgStress ?? s.daily?.avgStressLevel)),
-    avgRestingHR:     avg(snaps.map((s) => s.daily?.restingHeartRate)),
-    workouts:         allActs.length,
+    daysLogged:          foodDays.length,
+    totalDays:           snaps.length,
+    avgCalories:         avg(foodDays.map((s) => s.food!.calories)),
+    avgProtein:          avg(foodDays.map((s) => s.food!.protein)),
+    avgCarbs:            avg(foodDays.map((s) => s.food!.carbs)),
+    avgFat:              avg(foodDays.map((s) => s.food!.fat)),
+    avgSleepHours:       avg(sleepDays.map((s) => +(s.sleep.totalSleepSeconds / 3600).toFixed(1))),
+    avgSleepScore:       avg(sleepDays.map((s) => s.sleep.sleepScore)),
+    avgDeepMin:          avg(sleepDays.map((s) => Math.round(s.sleep.deepSleepSeconds / 60))),
+    avgRemMin:           avg(sleepDays.map((s) => Math.round(s.sleep.remSleepSeconds / 60))),
+    avgHRV:              avg(snaps.map((s) => s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv)),
+    avgSteps:            avg(stepDays.map((s) => s.daily.steps)),
+    avgDistKm:           avg(stepDays.map((s) => +(s.daily.distanceMeters / 1000).toFixed(2))),
+    totalDistKm:         +(sum(snaps.map((s) => s.daily?.distanceMeters ?? 0)) / 1000).toFixed(1),
+    totalModMin:         sum(snaps.map((s) => s.daily?.moderateIntensityMinutes ?? 0)),
+    totalVigMin:         sum(snaps.map((s) => s.daily?.vigorousIntensityMinutes ?? 0)),
+    totalActiveCal:      sum(snaps.map((s) => s.daily?.activeCalories)),
+    avgStress:           avg(snaps.map((s) => s.stress?.avgStress ?? s.daily?.avgStressLevel)),
+    avgRestingHR:        avg(snaps.map((s) => s.daily?.restingHeartRate)),
+    avgSpo2:             avg(snaps.map((s) => s.spo2?.average ?? s.daily?.avgSpo2)),
+    avgBatteryHigh:      avg(snaps.map((s) => s.bodybattery?.highest)),
+    avgBatteryLow:       avg(snaps.map((s) => s.bodybattery?.lowest)),
+    avgBatteryCharged:   avg(snaps.map((s) => s.bodybattery?.charged ?? s.daily?.bodyBatteryCharged)),
+    avgBatteryDrained:   avg(snaps.map((s) => s.bodybattery?.drained ?? s.daily?.bodyBatteryDrained)),
+    workouts:            allActs.length,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    workoutTypes:     [...new Set(allActs.map((a: any) => a.activityType ?? ""))].filter(Boolean).slice(0, 6).join(", "),
-    avgBatteryHigh:   avg(snaps.map((s) => s.bodybattery?.highest)),
-    avgBatteryLow:    avg(snaps.map((s) => s.bodybattery?.lowest)),
+    workoutTypes:        [...new Set(allActs.map((a: any) => a.activityType ?? ""))].filter(Boolean).slice(0, 6).join(", "),
+    totalTrainingLoad:   actsWithLoad.length ? Math.round(sum(actsWithLoad.map((a) => a.trainingLoad))) : null,
+    prCount:             allActs.filter((a) => a.pr).length,
   };
 }
 
@@ -147,7 +165,6 @@ export async function POST(req: Request) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY not set" }, { status: 500 });
 
-  // Return cached result for the same day unless forced
   if (!force) {
     const cached = await readSummaryCache(date);
     if (cached) {
@@ -171,16 +188,29 @@ export async function POST(req: Request) {
     getLogForDate(today),
     getRecentWeightEntries(35),
   ]);
-  const monWeights   = weightRows.filter((w) => monDates.includes(w.date));
-  const bmr          = profile ? calculateBMR(profile) : null;
-  const tdee         = profile ? calculateTDEE(profile) : null;
-  const suppTaken    = suppLog.filter((l) => l.taken).length;
 
-  const [todaySnaps, weekSnaps, monSnaps] = await Promise.all([
-    buildSnapshots([today], allEntries),
-    buildSnapshots(weekDates, allEntries),
-    buildSnapshots(monDates, allEntries),
+  const monWeights = weightRows.filter((w) => monDates.includes(w.date));
+  const bmr        = profile ? calculateBMR(profile) : null;
+  const tdee       = profile ? calculateTDEE(profile) : null;
+
+  const suppIds = supplements.map((s) => s.id);
+  const [weekAdherence, monAdherence] = await Promise.all([
+    suppIds.length ? getAdherenceForRange(suppIds, weekDates) : Promise.resolve({} as Record<string, number>),
+    suppIds.length ? getAdherenceForRange(suppIds, monDates)  : Promise.resolve({} as Record<string, number>),
   ]);
+  const suppTaken = suppLog.filter((l) => l.taken).length;
+
+  // Fetch per-day snapshots + today's extra caches in parallel
+  const [[todaySnaps, weekSnaps, monSnaps], todayBodyComp, userMetrics] = await Promise.all([
+    Promise.all([
+      buildSnapshots([today], allEntries),
+      buildSnapshots(weekDates, allEntries),
+      buildSnapshots(monDates, allEntries),
+    ]),
+    readGarminCache<{ weightKg: number | null; bmi: number | null; bodyFatPct: number | null; muscleMassKg: number | null; bodyWaterPct: number | null }>(today, "bodycomp"),
+    readGarminCache<{ vo2MaxRunning: number | null; vo2MaxCycling: number | null }>(today, "usermetrics"),
+  ]);
+
   const todaySnap = todaySnaps[0];
   const weekSum   = summarizePeriod(weekSnaps);
   const monSum    = summarizePeriod(monSnaps);
@@ -199,72 +229,147 @@ export async function POST(req: Request) {
     ? +(monWeights[monWeights.length - 1].weightKg - monWeights[0].weightKg).toFixed(1)
     : null;
 
+  // ── Derived today values ──────────────────────────────────────────────────
+  const d = todaySnap;
+  const calorieBalance = d.food && (d.daily?.activeCalories || tdee)
+    ? Math.round(d.food.calories - (d.daily?.totalCalories ?? d.daily?.activeCalories ?? tdee ?? 2000))
+    : null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const workoutLines = d.activities.map((a: any) => {
+    const parts = [
+      a.activityName ?? a.activityType,
+      `${Math.round((a.durationSeconds ?? 0) / 60)} min`,
+      a.distanceMeters > 0 ? `${(a.distanceMeters / 1000).toFixed(1)} km` : null,
+      a.calories ? `${a.calories} kcal` : null,
+      a.avgHr ? `avg HR ${a.avgHr} bpm` : null,
+      a.maxHr ? `max HR ${a.maxHr} bpm` : null,
+      a.aerobicEffect != null ? `aerobic eff ${a.aerobicEffect}` : null,
+      a.anaerobicEffect != null ? `anaerobic eff ${a.anaerobicEffect}` : null,
+      a.trainingLoad != null ? `load ${a.trainingLoad}` : null,
+      a.pr ? "🏆 PR" : null,
+    ].filter(Boolean);
+    return `  - ${parts.join(" | ")}`;
+  });
+
+  const na = (v: unknown, unit = "") => (v != null && v !== 0 ? `${v}${unit}` : "no data");
+
   // ── Build prompt ──────────────────────────────────────────────────────────
 
-  const na = (v: unknown) => (v != null ? String(v) : "no data");
+  const prompt = `You are an expert personal health coach and sports nutritionist with access to comprehensive biometric, nutrition, and activity data. Analyze everything below and provide a thorough, data-driven, personalized assessment.
 
-  const prompt = `You are an expert personal health coach and sports nutritionist. Analyze the following health data and provide a detailed, personalized assessment.
-
-## User Profile
+## USER PROFILE
 ${profile
-  ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm}cm | Weight: ${profile.weightKg}kg
+  ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg
 BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}`
-  : "Not configured"}
+  : "Not configured — base analysis on Garmin data only"}
 
-## Daily calorie/macro goals
-Calories: ${tdee ?? 2000} kcal | Protein: 150g | Carbs: 250g | Fat: 65g
+## FITNESS METRICS (Garmin account-level)
+VO2 Max (running): ${na(userMetrics?.vo2MaxRunning)} ml/kg/min
+VO2 Max (cycling): ${na(userMetrics?.vo2MaxCycling)} ml/kg/min
+
+## BODY COMPOSITION (latest Garmin scale reading for ${today})
+${todayBodyComp
+  ? `Weight: ${na(todayBodyComp.weightKg, " kg")} | BMI: ${na(todayBodyComp.bmi)} | Body fat: ${na(todayBodyComp.bodyFatPct, "%")} | Muscle mass: ${na(todayBodyComp.muscleMassKg, " kg")} | Body water: ${na(todayBodyComp.bodyWaterPct, "%")}`
+  : "No Garmin scale data for this date"}
+
+## CALORIE & MACRO GOALS
+Goal: ${tdee ?? 2000} kcal | Protein: 150 g | Carbs: 250 g | Fat: 65 g
 
 ---
 
-## TODAY (${today})
-### Nutrition logged
-Calories: ${na(todaySnap.food ? Math.round(todaySnap.food.calories) : null)} kcal
-Protein: ${na(todaySnap.food ? Math.round(todaySnap.food.protein) : null)}g | Carbs: ${na(todaySnap.food ? Math.round(todaySnap.food.carbs) : null)}g | Fat: ${na(todaySnap.food ? Math.round(todaySnap.food.fat) : null)}g
+## TODAY — ${today}
+
+### Nutrition
+Calories logged: ${d.food ? Math.round(d.food.calories) : "nothing logged"} kcal${calorieBalance != null ? ` (balance vs total burn: ${calorieBalance > 0 ? "+" : ""}${calorieBalance} kcal)` : ""}
+Protein: ${d.food ? Math.round(d.food.protein) : "—"} g | Carbs: ${d.food ? Math.round(d.food.carbs) : "—"} g | Fat: ${d.food ? Math.round(d.food.fat) : "—"} g
 Meals: ${Object.entries(todayMeals).map(([m, items]) => `${m}: ${items.join(", ")}`).join(" | ") || "nothing logged yet"}
 
-### Activity & recovery (Garmin)
-Steps: ${na(todaySnap.daily?.steps)}
-Active calories burned: ${na(todaySnap.daily?.activeCalories)}
-Resting heart rate: ${na(todaySnap.daily?.restingHeartRate)} bpm
-Sleep: ${todaySnap.sleep
-  ? `${(todaySnap.sleep.totalSleepSeconds / 3600).toFixed(1)}h total | Score: ${todaySnap.sleep.sleepScore ?? "n/a"} | Deep: ${Math.round(todaySnap.sleep.deepSleepSeconds / 60)}min | REM: ${Math.round(todaySnap.sleep.remSleepSeconds / 60)}min`
-  : "no data"}
-HRV: ${na(todaySnap.hrv?.lastNight ?? todaySnap.sleep?.avgNightlyHrv)} ms (${na(todaySnap.hrv?.status)})
-Body Battery: ${todaySnap.bodybattery ? `${todaySnap.bodybattery.lowest}–${todaySnap.bodybattery.highest}/100` : "no data"}
-Stress: ${na(todaySnap.stress?.avgStress ?? todaySnap.daily?.avgStressLevel)}/100
-Workouts: ${todaySnap.activities.length
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ? todaySnap.activities.map((a: any) => `${a.activityType} ${Math.round((a.durationSeconds ?? 0) / 60)}min ${a.calories ? a.calories + "kcal" : ""}`).join(" | ")
-  : "none"}
+### Movement
+Steps: ${na(d.daily?.steps)} | Distance: ${d.daily?.distanceMeters ? (d.daily.distanceMeters / 1000).toFixed(2) + " km" : "no data"} | Floors climbed: ${na(d.daily?.floorsClimbed)}
+Active calories: ${na(d.daily?.activeCalories)} kcal | BMR: ${na(d.daily?.bmrCalories ?? bmr)} kcal | Total burn: ${na(d.daily?.totalCalories)} kcal
+Moderate intensity: ${na(d.daily?.moderateIntensityMinutes, " min")} | Vigorous intensity: ${na(d.daily?.vigorousIntensityMinutes, " min")}
+
+### Heart & Oxygen
+Resting HR: ${na(d.daily?.restingHeartRate, " bpm")} | Max HR today: ${na(d.daily?.maxHeartRate, " bpm")}
+SpO2 avg: ${na(d.spo2?.average ?? d.daily?.avgSpo2, "%")} | SpO2 lowest: ${na(d.spo2?.lowest ?? d.daily?.lowestSpo2, "%")}
+Respiration rate: ${na(d.daily?.avgRespirationRate, " br/min")}
+
+### Sleep (last night)
+${d.sleep
+  ? `Duration: ${(d.sleep.totalSleepSeconds / 3600).toFixed(1)} h | Score: ${d.sleep.sleepScore ?? "n/a"} | Deep: ${Math.round(d.sleep.deepSleepSeconds / 60)} min | REM: ${Math.round(d.sleep.remSleepSeconds / 60)} min | Awake: ${Math.round((d.sleep.awakeSleepSeconds ?? 0) / 60)} min
+Nightly HRV: ${na(d.sleep.avgNightlyHrv, " ms")} | Sleep HRV status: ${na(d.sleep.hrvStatus)}
+Respiration during sleep: ${na(d.sleep.avgRespirationRate, " br/min")} (lowest ${na(d.sleep.lowestRespirationRate, " br/min")})
+Body battery change during sleep: ${d.sleep.bodyBatteryChange != null ? (d.sleep.bodyBatteryChange > 0 ? "+" : "") + d.sleep.bodyBatteryChange : "no data"}`
+  : "No sleep data"}
+
+### Recovery
+HRV (last night): ${na(d.hrv?.lastNight ?? d.sleep?.avgNightlyHrv, " ms")} | 5-day avg: ${na(d.hrv?.lastFiveDaysAvg, " ms")} | Weekly avg: ${na(d.hrv?.weeklyAvg, " ms")} | Status: ${na(d.hrv?.status ?? d.sleep?.hrvStatus)}
+Body Battery: ${d.bodybattery ? `${d.bodybattery.lowest}–${d.bodybattery.highest}/100 | Charged: +${d.bodybattery.charged ?? "?"} | Drained: -${d.bodybattery.drained ?? "?"}` : "no data"}
+Stress: ${na(d.stress?.avgStress ?? d.daily?.avgStressLevel, "/100")} avg | Max: ${na(d.stress?.maxStress ?? d.daily?.maxStressLevel, "/100")}${d.stress?.restPercent != null ? ` | Rest time: ${d.stress.restPercent}%` : ""}
+Training readiness: ${d.trainingstatus?.readinessScore != null ? `${d.trainingstatus.readinessScore}/100 (${d.trainingstatus.readinessLevel ?? "?"})` : "no data"}
+Acute training load: ${na(d.trainingstatus?.acuteLoad)} | Chronic load: ${na(d.trainingstatus?.chronicLoad)} | Load ratio: ${na(d.trainingstatus?.loadRatio)}
+
+### Workouts today
+${workoutLines.length > 0 ? workoutLines.join("\n") : "  - No workouts logged"}
 
 ### Supplements
 ${supplements.length
-  ? `${suppTaken}/${supplements.length} taken — ${supplements.map((s) => `${s.name} ${s.dose}${s.unit}`).join(", ")}`
-  : "none configured"}
+  ? `Today: ${suppTaken}/${supplements.length} taken
+Stack:
+${supplements.map((s) => {
+    const todayTaken = suppLog.find((l) => l.supplementId === s.id)?.taken ? "✓" : "✗";
+    const w = weekAdherence[s.id] ?? 0;
+    const m = monAdherence[s.id] ?? 0;
+    const extra = [s.description, s.usageTip].filter(Boolean).join("; ");
+    return `  - ${s.name} ${s.dose}${s.unit} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${extra ? ` | notes: ${extra}` : ""}`;
+  }).join("\n")}`
+  : "No supplements configured"}
 
 ---
 
-## LAST 7 DAYS (${week7Start} → ${today})
-Food logged: ${weekSum.daysLogged}/${weekSum.totalDays} days
-Avg calories: ${na(weekSum.avgCalories)} kcal | Avg protein: ${na(weekSum.avgProtein)}g | Avg carbs: ${na(weekSum.avgCarbs)}g | Avg fat: ${na(weekSum.avgFat)}g
-Avg sleep: ${na(weekSum.avgSleepHours)}h | Sleep score: ${na(weekSum.avgSleepScore)} | Deep: ${na(weekSum.avgDeepMin)}min | REM: ${na(weekSum.avgRemMin)}min
-Avg HRV: ${na(weekSum.avgHRV)} ms
-Avg steps: ${na(weekSum.avgSteps)} | Total active calories: ${weekSum.totalActiveCal}
-Workouts: ${weekSum.workouts} sessions (${weekSum.workoutTypes || "none"})
-Avg stress: ${na(weekSum.avgStress)}/100 | Avg resting HR: ${na(weekSum.avgRestingHR)} bpm
-Avg Body Battery: ${na(weekSum.avgBatteryLow)}–${na(weekSum.avgBatteryHigh)}/100
+## LAST 7 DAYS — ${week7Start} → ${today}
+
+Nutrition (${weekSum.daysLogged}/${weekSum.totalDays} days logged):
+  Avg calories: ${na(weekSum.avgCalories, " kcal")} | Avg protein: ${na(weekSum.avgProtein, " g")} | Avg carbs: ${na(weekSum.avgCarbs, " g")} | Avg fat: ${na(weekSum.avgFat, " g")}
+
+Sleep:
+  Avg: ${na(weekSum.avgSleepHours, " h")} | Score: ${na(weekSum.avgSleepScore)} | Deep: ${na(weekSum.avgDeepMin, " min")} | REM: ${na(weekSum.avgRemMin, " min")}
+
+Recovery:
+  Avg HRV: ${na(weekSum.avgHRV, " ms")} | Avg resting HR: ${na(weekSum.avgRestingHR, " bpm")} | Avg SpO2: ${na(weekSum.avgSpo2, "%")}
+  Avg Body Battery: ${na(weekSum.avgBatteryLow)}–${na(weekSum.avgBatteryHigh)}/100 | Avg charged: +${na(weekSum.avgBatteryCharged)} | Avg drained: -${na(weekSum.avgBatteryDrained)}
+  Avg stress: ${na(weekSum.avgStress, "/100")}
+
+Activity:
+  Avg steps: ${na(weekSum.avgSteps)} | Total distance: ${na(weekSum.totalDistKm, " km")}
+  Moderate intensity: ${weekSum.totalModMin} min/week (WHO target: 150 min) | Vigorous: ${weekSum.totalVigMin} min/week (WHO target: 75 min)
+  Workouts: ${weekSum.workouts} sessions (${weekSum.workoutTypes || "none"}) | Total training load: ${na(weekSum.totalTrainingLoad)}${weekSum.prCount > 0 ? ` | PRs: ${weekSum.prCount}` : ""}
+  Total active calories: ${weekSum.totalActiveCal} kcal
 
 ---
 
-## LAST 30 DAYS (${mon30Start} → ${today})
-Food logged: ${monSum.daysLogged}/${monSum.totalDays} days
-Avg calories: ${na(monSum.avgCalories)} kcal | Avg protein: ${na(monSum.avgProtein)}g | Avg carbs: ${na(monSum.avgCarbs)}g | Avg fat: ${na(monSum.avgFat)}g
-Avg sleep: ${na(monSum.avgSleepHours)}h | Sleep score: ${na(monSum.avgSleepScore)}
-Avg HRV: ${na(monSum.avgHRV)} ms | Avg resting HR: ${na(monSum.avgRestingHR)} bpm
-Avg steps: ${na(monSum.avgSteps)} | Total workouts: ${monSum.workouts} sessions (${monSum.workoutTypes || "none"})
-Avg stress: ${na(monSum.avgStress)}/100
+## LAST 30 DAYS — ${mon30Start} → ${today}
+
+Nutrition (${monSum.daysLogged}/${monSum.totalDays} days logged):
+  Avg calories: ${na(monSum.avgCalories, " kcal")} | Avg protein: ${na(monSum.avgProtein, " g")} | Avg carbs: ${na(monSum.avgCarbs, " g")} | Avg fat: ${na(monSum.avgFat, " g")}
+
+Sleep:
+  Avg: ${na(monSum.avgSleepHours, " h")} | Score: ${na(monSum.avgSleepScore)}
+
+Recovery:
+  Avg HRV: ${na(monSum.avgHRV, " ms")} | Avg resting HR: ${na(monSum.avgRestingHR, " bpm")} | Avg SpO2: ${na(monSum.avgSpo2, "%")}
+  Avg Body Battery: ${na(monSum.avgBatteryLow)}–${na(monSum.avgBatteryHigh)}/100
+  Avg stress: ${na(monSum.avgStress, "/100")}
+
+Activity:
+  Avg steps: ${na(monSum.avgSteps)} | Total distance: ${na(monSum.totalDistKm, " km")}
+  Moderate intensity: ${monSum.totalModMin} min/month | Vigorous: ${monSum.totalVigMin} min/month
+  Workouts: ${monSum.workouts} sessions (${monSum.workoutTypes || "none"}) | Total training load: ${na(monSum.totalTrainingLoad)}${monSum.prCount > 0 ? ` | PRs: ${monSum.prCount}` : ""}
+  Total active calories: ${monSum.totalActiveCal} kcal
+
 Weight trend: ${weightChange != null
-  ? `${weightChange > 0 ? "+" : ""}${weightChange} kg over the period (${monWeights[0]?.weightKg}kg → ${monWeights[monWeights.length - 1]?.weightKg}kg)`
+  ? `${weightChange > 0 ? "+" : ""}${weightChange} kg over 30 days (${monWeights[0]?.weightKg} kg → ${monWeights[monWeights.length - 1]?.weightKg} kg)`
   : "no weight data"}
 
 ---
@@ -274,33 +379,44 @@ Return a JSON object with EXACTLY this structure (no markdown, no extra text):
   "today": {
     "score": <integer 1–10>,
     "headline": "<single punchy sentence summarizing today>",
-    "summary": "<2–3 sentence narrative with specific numbers>",
-    "highlights": ["<what went well>"],
-    "concerns": ["<gap or concern — empty array if none>"]
+    "summary": "<2–3 sentence narrative citing specific numbers from the data above>",
+    "highlights": ["<what went well — cite a metric>"],
+    "concerns": ["<gap or concern — cite a metric — empty array if none>"]
   },
   "week": {
     "score": <integer 1–10>,
     "headline": "<single sentence summarizing the week>",
-    "summary": "<2–3 sentence narrative with specific numbers>",
-    "trends": ["<trend 1>", "<trend 2>", "<trend 3>"]
+    "summary": "<2–3 sentence narrative citing specific numbers>",
+    "trends": ["<trend 1 — cite numbers>", "<trend 2>", "<trend 3>"]
   },
   "month": {
     "score": <integer 1–10>,
     "headline": "<single sentence summarizing the month>",
-    "summary": "<2–3 sentence narrative with specific numbers>",
+    "summary": "<2–3 sentence narrative citing specific numbers>",
     "trends": ["<trend 1>", "<trend 2>", "<trend 3>"]
   },
+  "supplements": {
+    "stackAssessment": "<2–3 sentences evaluating the stack for this user's age, sex, weight, activity level, BMR/TDEE, VO2 max, and key metrics (HRV, sleep score, stress, resting HR). Reference at least 3 specific numbers.>",
+    "adherenceInsight": "<1–2 sentences on adherence — note inconsistently taken supplements and any correlation with metric dips>",
+    "gaps": ["<missing supplement grounded in a specific data signal — e.g. 'Magnesium glycinate 400mg: avg stress 65/100 + 6.1h sleep warrants evening magnesium' — cite the metric, never generic>"],
+    "timing": ["<timing tip for a supplement actually in their stack, referencing their fat intake, meal patterns, or Garmin workout times>"],
+    "interactions": ["<real synergy or conflict between their existing supplements — empty array if none>"]
+  },
   "recommendations": [
-    { "priority": "high|medium|low", "category": "nutrition|sleep|exercise|recovery|supplements|stress|hydration", "text": "<specific, actionable — mention exact numbers/targets>" }
+    { "priority": "high|medium|low", "category": "nutrition|sleep|exercise|recovery|supplements|stress|hydration", "text": "<specific and actionable — cite exact numbers and targets from the data>" }
   ]
 }
 
-Rules:
-- Score 10 = all metrics optimal; weight sleep quality, nutrition adherence, recovery, and activity
-- highlights: 1–3 items. concerns: 0–3 items
-- recommendations: 3–6 total, sorted high → low priority
-- If Garmin data is missing for a period, base the score on available data and note the gap
-- Be direct, coach-like, positive but honest`;
+Scoring rules:
+- 10 = all metrics optimal; weight sleep quality, HRV, nutrition adherence, recovery, and training load balance
+- highlights: 1–3 items, each citing a metric. concerns: 0–3 items, each citing a metric
+- supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number
+- supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest something already in the stack
+- supplements.timing: 1–3 items, only for supplements already in their stack
+- supplements.interactions: only evidence-based interactions, empty array if none
+- recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
+- Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
+- If Garmin data is missing for a period, say so and base the score on what is available`;
 
   try {
     const resp = await fetch(

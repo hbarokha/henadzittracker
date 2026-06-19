@@ -120,7 +120,8 @@
     border-color: var(--border-dim) !important;
   }
 
-  /* Gray text remapping */
+  /* White / gray text remapping */
+  .text-white    { color: var(--text) !important; }
   .text-gray-900 { color: var(--text) !important; }
   .text-gray-800 { color: var(--text) !important; }
   .text-gray-700 { color: var(--text-sec) !important; }

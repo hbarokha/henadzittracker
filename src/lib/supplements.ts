@@ -76,6 +76,19 @@ export async function getLogForDate(date: string): Promise<SupplementLog[]> {
   return data.log.filter((l) => l.date === date && active.has(l.supplementId));
 }
 
+export async function getAdherenceForRange(
+  supplementIds: string[],
+  dates: string[]
+): Promise<Record<string, number>> {
+  const data = await loadData();
+  const dateSet = new Set(dates);
+  const result: Record<string, number> = {};
+  for (const id of supplementIds) {
+    result[id] = data.log.filter((l) => l.supplementId === id && dateSet.has(l.date) && l.taken).length;
+  }
+  return result;
+}
+
 export async function setTaken(supplementId: string, date: string, taken: boolean): Promise<void> {
   const data = await loadData();
   const entry = data.log.find((l) => l.supplementId === supplementId && l.date === date);

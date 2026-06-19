@@ -17,6 +17,8 @@ import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
 
+type AppTab = "overview" | "nutrition" | "supplements";
+
 function isoToday() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -38,12 +40,10 @@ function formatDate(iso: string) {
   const date = new Date(y, m - 1, d);
   return `${DAYS[date.getDay()]}, ${MONTHS[date.getMonth()]} ${d}`;
 }
-function formatYear(iso: string) {
-  return iso.split("-")[0];
-}
+function formatYear(iso: string) { return iso.split("-")[0]; }
 function formatShort(iso: string) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
+  const [, m, d] = iso.split("-").map(Number);
+  const date = new Date(Number(iso.split("-")[0]), m - 1, d);
   return `${SDAYS[date.getDay()]} ${SMONS[date.getMonth()]} ${d}`;
 }
 
@@ -57,7 +57,33 @@ interface GarminStatus {
   username: string | null;
 }
 
-/* ── Section Heading ──────────────────────────────────────────────────────── */
+// ── Tab icons ────────────────────────────────────────────────────────────────
+
+function IconOverview() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
+
+function IconNutrition() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+    </svg>
+  );
+}
+
+function IconSupplements() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+    </svg>
+  );
+}
+
+// ── Section Heading ───────────────────────────────────────────────────────────
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 mb-4">
@@ -73,7 +99,7 @@ function SectionHead({ label, children }: { label: string; children?: React.Reac
   );
 }
 
-/* ── Icon Button ─────────────────────────────────────────────────────────── */
+// ── Icon Button ───────────────────────────────────────────────────────────────
 function IconBtn({
   onClick, title, active, children
 }: {
@@ -107,9 +133,54 @@ function IconBtn({
   );
 }
 
+// ── Tab Bar ───────────────────────────────────────────────────────────────────
+function TabBar({ active, onChange }: { active: AppTab; onChange: (t: AppTab) => void }) {
+  const tabs: { id: AppTab; label: string; icon: React.ReactNode }[] = [
+    { id: "overview",     label: "Overview",     icon: <IconOverview /> },
+    { id: "nutrition",    label: "Nutrition",     icon: <IconNutrition /> },
+    { id: "supplements",  label: "Supplements",   icon: <IconSupplements /> },
+  ];
+
+  return (
+    <div
+      className="flex"
+      style={{ borderBottom: "1px solid var(--border)" }}
+    >
+      {tabs.map((tab) => {
+        const isActive = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 sm:py-0 sm:h-11 text-xs font-semibold transition-all duration-200 relative"
+            style={{
+              color: isActive ? "var(--amber)" : "var(--text-muted)",
+              fontFamily: "var(--font-display)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            <span style={{ opacity: isActive ? 1 : 0.7 }}>{tab.icon}</span>
+            <span>{tab.label.toUpperCase()}</span>
+            {/* Active underline */}
+            <span
+              className="absolute bottom-0 left-0 right-0 h-[2px] transition-all duration-300"
+              style={{
+                background: isActive ? "var(--amber)" : "transparent",
+                boxShadow: isActive ? "0 0 8px var(--amber-glow)" : "none",
+              }}
+            />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function Home() {
   const [todayIso]    = useState(isoToday);
   const [selectedDate, setSelectedDate] = useState(isoToday);
+  const [activeTab, setActiveTab] = useState<AppTab>("overview");
   const [entries,     setEntries]  = useState<LogEntry[]>([]);
   const [goals,       setGoals]    = useState<Goals>(DEFAULT_GOALS);
   const [stats,       setStats]    = useState<StatsData | null>(null);
@@ -161,10 +232,7 @@ export default function Home() {
     fetchStats();
   }
 
-  function handleSaveGoals(g: Goals) {
-    saveGoals(g);
-    setGoals(g);
-  }
+  function handleSaveGoals(g: Goals) { saveGoals(g); setGoals(g); }
 
   async function handleGarminConnected() {
     setShowGarminConnect(false);
@@ -202,7 +270,7 @@ export default function Home() {
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        {/* Amber glow line at top */}
+        {/* Calorie progress line */}
         <div
           className="h-px w-full"
           style={{
@@ -211,123 +279,81 @@ export default function Home() {
           }}
         />
 
-        <div className="max-w-5xl mx-auto px-5 h-16 flex items-center justify-between gap-4">
+        {/* Main header row */}
+        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
 
-          {/* Left: wordmark + date nav */}
-          <div className="flex items-center gap-5 min-w-0">
-            <div className="shrink-0">
-              <span
-                className="text-2xl tracking-widest select-none"
-                style={{ fontFamily: "var(--font-hero)", color: "var(--text)" }}
-              >
-                HENADZI<span style={{ color: "var(--amber)" }}>TRACKER</span>
-              </span>
-            </div>
-
-            {/* Divider */}
-            <div className="w-px h-6 hidden sm:block" style={{ background: "var(--border-mid)" }} />
-
-            {/* Date nav */}
-            <div className="hidden sm:flex items-center gap-1">
-              <button
-                onClick={goBack}
-                className="w-7 h-7 rounded flex items-center justify-center transition-colors"
-                style={{ color: "var(--text-muted)" }}
-                onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
-                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-
-              <div className="text-center min-w-[130px]">
-                <p
-                  className="text-xs font-medium leading-none"
-                  style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}
-                >
-                  {isToday ? "Today" : formatShort(selectedDate)}
-                </p>
-                <p
-                  className="text-[10px] leading-none mt-1"
-                  style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}
-                >
-                  {formatDate(selectedDate)} · {formatYear(selectedDate)}
-                </p>
-              </div>
-
-              <button
-                onClick={goForward}
-                disabled={isToday}
-                className="w-7 h-7 rounded flex items-center justify-center transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
-                style={{ color: "var(--text-muted)" }}
-                onMouseEnter={e => { if (!isToday) (e.currentTarget.style.color = "var(--text)"); }}
-                onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-
-              {!isToday && (
-                <button
-                  onClick={goToday}
-                  className="text-[9px] font-medium px-2 py-1 rounded-md transition-all"
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    background: "var(--amber-dim)",
-                    color: "var(--amber)",
-                    border: "1px solid var(--amber-glow)",
-                  }}
-                >
-                  NOW
-                </button>
-              )}
-            </div>
+          {/* Left: wordmark */}
+          <div className="shrink-0">
+            <span
+              className="text-xl sm:text-2xl tracking-widest select-none"
+              style={{ fontFamily: "var(--font-hero)", color: "var(--text)" }}
+            >
+              HENADZI<span style={{ color: "var(--amber)" }}>TRACKER</span>
+            </span>
           </div>
 
-          {/* Right: stats + actions */}
-          <div className="flex items-center gap-3">
-
-            {/* Streak */}
-            {stats && stats.streak > 0 && (
-              <div
-                className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg"
-                style={{ background: "var(--bg-raised)", border: "1px solid var(--border-mid)" }}
+          {/* Center: date nav — desktop only */}
+          <div className="hidden sm:flex items-center gap-1 flex-1 justify-center">
+            <button
+              onClick={goBack}
+              className="w-7 h-7 rounded flex items-center justify-center transition-colors"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div className="text-center min-w-[140px]">
+              <p className="text-xs font-medium leading-none" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
+                {isToday ? "Today" : formatShort(selectedDate)}
+              </p>
+              <p className="text-[10px] leading-none mt-1" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                {formatDate(selectedDate)} · {formatYear(selectedDate)}
+              </p>
+            </div>
+            <button
+              onClick={goForward}
+              disabled={isToday}
+              className="w-7 h-7 rounded flex items-center justify-center transition-colors disabled:opacity-25"
+              style={{ color: "var(--text-muted)" }}
+              onMouseEnter={e => { if (!isToday) (e.currentTarget.style.color = "var(--text)"); }}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-muted)")}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            {!isToday && (
+              <button
+                onClick={goToday}
+                className="text-[9px] font-medium px-2 py-1 rounded-md"
+                style={{ fontFamily: "var(--font-mono)", background: "var(--amber-dim)", color: "var(--amber)", border: "1px solid var(--amber-glow)" }}
               >
-                <span className="text-sm leading-none">🔥</span>
-                <div>
-                  <p
-                    className="text-sm font-semibold leading-none tabular"
-                    style={{ fontFamily: "var(--font-display)", color: "var(--amber)" }}
-                  >
-                    {stats.streak}
-                  </p>
-                  <p className="text-[9px] leading-none mt-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                    DAY RUN
-                  </p>
-                </div>
+                NOW
+              </button>
+            )}
+          </div>
+
+          {/* Right: streak + calorie count + icon buttons */}
+          <div className="flex items-center gap-2 shrink-0">
+            {stats && stats.streak > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: "var(--bg-raised)", border: "1px solid var(--border-mid)" }}>
+                <span className="text-sm">🔥</span>
+                <p className="text-sm font-semibold tabular" style={{ fontFamily: "var(--font-display)", color: "var(--amber)" }}>{stats.streak}</p>
+                <p className="text-[9px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>DAY</p>
               </div>
             )}
 
-            {/* Calorie hero number */}
             <div className="text-right">
-              <p
-                className="text-3xl leading-none tabular"
-                style={{ fontFamily: "var(--font-hero)", color: totals.calories === 0 ? "var(--text-dim)" : "var(--amber)" }}
-              >
+              <p className="text-2xl sm:text-3xl leading-none tabular" style={{ fontFamily: "var(--font-hero)", color: totals.calories === 0 ? "var(--text-dim)" : "var(--amber)" }}>
                 {Math.round(totals.calories)}
               </p>
-              <p
-                className="text-[9px] leading-none mt-0.5"
-                style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)", letterSpacing: "0.1em" }}
-              >
-                KCAL
-              </p>
+              <p className="text-[9px] leading-none mt-0.5" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)", letterSpacing: "0.1em" }}>KCAL</p>
             </div>
 
-            {/* Icon buttons */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1">
               <IconBtn
                 onClick={() => garminStatus.connected ? disconnectGarmin() : setShowGarminConnect(true)}
                 title={garminStatus.connected ? `Garmin: ${garminStatus.username ?? "connected"} — click to disconnect` : "Connect Garmin"}
@@ -337,13 +363,11 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </IconBtn>
-
               <IconBtn onClick={() => setShowProfile(true)} title="Personal profile">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                 </svg>
               </IconBtn>
-
               <IconBtn onClick={() => setShowGoals(true)} title="Daily goals">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -354,135 +378,151 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Mobile date nav — visible only on small screens */}
+        {/* Mobile date nav — compact single line */}
         <div
-          className="sm:hidden flex items-center justify-between px-4 py-2"
-          style={{ borderTop: "1px solid var(--border-dim)", background: "rgba(20,18,16,0.6)" }}
+          className="sm:hidden flex items-center justify-between px-3 py-1.5"
+          style={{ borderTop: "1px solid var(--border-dim)", background: "rgba(20,18,16,0.5)" }}
         >
           <button
             onClick={goBack}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all"
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
             style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--border-mid)")}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            <span className="text-xs" style={{ fontFamily: "var(--font-mono)" }}>PREV</span>
           </button>
-
-          <div className="flex flex-col items-center gap-0.5">
-            <p
-              className="text-sm font-semibold leading-none"
-              style={{ fontFamily: "var(--font-display)", color: isToday ? "var(--amber)" : "var(--text)" }}
-            >
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold leading-none"
+              style={{ fontFamily: "var(--font-display)", color: isToday ? "var(--amber)" : "var(--text)" }}>
               {isToday ? "Today" : formatShort(selectedDate)}
             </p>
-            <p
-              className="text-[10px] leading-none"
-              style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}
-            >
-              {formatDate(selectedDate)}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
+            <span className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+              {formatDate(selectedDate).split(",")[0]}
+            </span>
             {!isToday && (
-              <button
-                onClick={goToday}
-                className="text-[9px] font-medium px-2 py-1 rounded-md"
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  background: "var(--amber-dim)",
-                  color: "var(--amber)",
-                  border: "1px solid var(--amber-glow)",
-                }}
-              >
+              <button onClick={goToday} className="text-[9px] font-medium px-1.5 py-0.5 rounded"
+                style={{ fontFamily: "var(--font-mono)", background: "var(--amber-dim)", color: "var(--amber)", border: "1px solid var(--amber-glow)" }}>
                 NOW
               </button>
             )}
-            <button
-              onClick={goForward}
-              disabled={isToday}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-              style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
-              onMouseEnter={e => { if (!isToday) e.currentTarget.style.borderColor = "var(--border-mid)"; }}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
-            >
-              <span className="text-xs" style={{ fontFamily: "var(--font-mono)" }}>NEXT</span>
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
           </div>
+          <button
+            onClick={goForward}
+            disabled={isToday}
+            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
+            style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
+          >
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
         </div>
+
+        {/* Tab bar */}
+        <TabBar active={activeTab} onChange={setActiveTab} />
       </header>
 
-      {/* ── Main ────────────────────────────────────────────────────────── */}
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-8">
+      {/* ── Tab Content ─────────────────────────────────────────────────── */}
+      <main className="max-w-5xl mx-auto px-4 py-5">
 
-        {/* Nutrition summary */}
-        <section>
-          <SectionHead label="Nutrition" />
-          <DailySummary totals={totals} goals={goals} />
-        </section>
+        {/* ── OVERVIEW ──────────────────────────────────────────────────── */}
+        {activeTab === "overview" && (
+          <div className="space-y-6">
+            {/* Quick nutrition status */}
+            <section>
+              <SectionHead label="Today at a Glance" />
+              <DailySummary totals={totals} goals={goals} compact />
+            </section>
 
-        {/* Weekly chart */}
-        {stats && stats.week.some((d) => d.calories > 0) && (
-          <section>
-            <SectionHead label="7-Day History" />
-            <WeeklyChart week={stats.week} goal={goals.calories} today={todayIso} />
-          </section>
+            {/* Weekly chart */}
+            {stats && stats.week.some((d) => d.calories > 0) && (
+              <section>
+                <SectionHead label="7-Day Calorie History" />
+                <WeeklyChart week={stats.week} goal={goals.calories} today={todayIso} />
+              </section>
+            )}
+
+            {/* Garmin */}
+            {garminStatus.connected ? (
+              <section>
+                <SectionHead label="Vitals — Garmin Connect" />
+                <GarminDashboard date={selectedDate} foodCalories={totals.calories} />
+              </section>
+            ) : (
+              <section>
+                <SectionHead label="Garmin Connect" />
+                <div
+                  className="rounded-2xl p-6 text-center space-y-3"
+                  style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+                >
+                  <p className="text-3xl">⚡</p>
+                  <p className="text-sm font-medium" style={{ color: "var(--text)" }}>Connect Garmin for activity, sleep & recovery data</p>
+                  <p className="text-xs" style={{ color: "var(--text-dim)" }}>Steps, HRV, sleep stages, Body Battery, stress and more</p>
+                  <button
+                    onClick={() => setShowGarminConnect(true)}
+                    className="mt-2 px-5 py-2 rounded-xl text-sm font-semibold transition-all"
+                    style={{ background: "var(--amber-dim)", color: "var(--amber)", border: "1px solid var(--amber-glow)" }}
+                  >
+                    Connect Garmin
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {/* AI Health Summary */}
+            <section>
+              <SectionHead label="AI Health Analysis" />
+              <HealthSummaryPanel date={selectedDate} />
+            </section>
+
+            {/* Weight chart */}
+            <section>
+              <SectionHead label="Body Weight Trend" />
+              <WeightChart todayIso={todayIso} />
+            </section>
+          </div>
         )}
 
-        {/* Garmin */}
-        {garminStatus.connected && (
-          <section>
-            <SectionHead label="Vitals — Garmin Connect" />
-            <GarminDashboard date={selectedDate} foodCalories={totals.calories} />
-          </section>
+        {/* ── NUTRITION ─────────────────────────────────────────────────── */}
+        {activeTab === "nutrition" && (
+          <div className="space-y-6">
+            {/* Calorie ring + macro bars */}
+            <section>
+              <SectionHead label="Daily Nutrition" />
+              <DailySummary totals={totals} goals={goals} />
+            </section>
+
+            {/* Add food + log — stacked on mobile, side by side on desktop */}
+            <section>
+              <SectionHead label="Food Log" />
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+                <div className="lg:col-span-3">
+                  <FoodLog entries={entries} onRemove={removeFood} date={selectedDate} todayIso={todayIso} />
+                </div>
+                <div className="lg:col-span-2 lg:sticky lg:top-28">
+                  <AddFoodPanel onAIAdd={addCustomFood} />
+                </div>
+              </div>
+            </section>
+          </div>
         )}
 
-        {/* Food log + add panel */}
-        <section>
-          <SectionHead label="Food Log" />
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-            <div className="lg:col-span-3">
-              <FoodLog entries={entries} onRemove={removeFood} date={selectedDate} todayIso={todayIso} />
-            </div>
-            <div className="lg:col-span-2 lg:sticky lg:top-20">
-              <AddFoodPanel onAIAdd={addCustomFood} />
-            </div>
+        {/* ── SUPPLEMENTS ───────────────────────────────────────────────── */}
+        {activeTab === "supplements" && (
+          <div className="space-y-6">
+            <section>
+              <SectionHead label="Daily Supplements" />
+              <SupplementLog date={selectedDate} />
+            </section>
           </div>
-        </section>
-
-        {/* AI Health Summary */}
-        <section>
-          <SectionHead label="AI Health Analysis" />
-          <HealthSummaryPanel date={selectedDate} />
-        </section>
-
-        {/* Supplements + Weight */}
-        <section>
-          <SectionHead label="Supplements & Body Weight" />
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <SupplementLog date={selectedDate} />
-            <WeightChart todayIso={todayIso} />
-          </div>
-        </section>
+        )}
       </main>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
-      {showGoals && (
-        <GoalsModal goals={goals} onSave={handleSaveGoals} onClose={() => setShowGoals(false)} />
-      )}
-      {showProfile && (
-        <ProfilePanel onClose={() => setShowProfile(false)} />
-      )}
-      {showGarminConnect && (
-        <GarminConnectModal onConnected={handleGarminConnected} onClose={() => setShowGarminConnect(false)} />
-      )}
+      {showGoals && <GoalsModal goals={goals} onSave={handleSaveGoals} onClose={() => setShowGoals(false)} />}
+      {showProfile && <ProfilePanel onClose={() => setShowProfile(false)} />}
+      {showGarminConnect && <GarminConnectModal onConnected={handleGarminConnected} onClose={() => setShowGarminConnect(false)} />}
     </div>
   );
 }

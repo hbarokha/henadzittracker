@@ -8,8 +8,9 @@ interface Totals {
 }
 
 interface Props {
-  totals: Totals;
-  goals:  Goals;
+  totals:   Totals;
+  goals:    Goals;
+  compact?: boolean;
 }
 
 const RADIUS        = 52;
@@ -48,13 +49,51 @@ const MACROS = [
   },
 ] as const;
 
-export default function DailySummary({ totals, goals }: Props) {
+export default function DailySummary({ totals, goals, compact }: Props) {
   const calPct  = Math.min(totals.calories / goals.calories, 1);
   const filled  = calPct * CIRCUMFERENCE;
   const gap     = CIRCUMFERENCE - filled;
   const color   = ringColor(calPct);
   const calLeft = Math.max(goals.calories - Math.round(totals.calories), 0);
   const over    = Math.round(totals.calories) - goals.calories;
+
+  if (compact) {
+    return (
+      <div
+        className="rounded-xl p-4 space-y-3"
+        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
+      >
+        {/* Calories row */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-1.5 shrink-0">
+            <span className="text-2xl leading-none" style={{ fontFamily: "var(--font-hero)", color }}>{Math.round(totals.calories)}</span>
+            <span className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>/ {goals.calories} kcal</span>
+          </div>
+          <span className="text-xs font-medium" style={{ fontFamily: "var(--font-mono)", color }}>
+            {over > 0 ? `+${over} over` : `${calLeft} left`}
+          </span>
+        </div>
+        <div className="h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-raised)" }}>
+          <div className="h-full rounded-full" style={{ width: `${calPct * 100}%`, background: color, transition: "width 0.9s ease", boxShadow: `0 0 6px ${color}` }} />
+        </div>
+        {/* Macro pills */}
+        <div className="flex gap-2">
+          {MACROS.map(({ key, label, color: c }) => {
+            const val = totals[key]; const goal = goals[key]; const pct = Math.min(val / goal, 1);
+            return (
+              <div key={key} className="flex-1 rounded-lg px-2.5 py-2" style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}>
+                <p className="text-[8px] uppercase tracking-wider mb-1" style={{ fontFamily: "var(--font-mono)", color: c }}>{label}</p>
+                <p className="text-sm leading-none" style={{ fontFamily: "var(--font-hero)", color: "var(--text)" }}>{Math.round(val)}<span className="text-[9px] ml-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>g</span></p>
+                <div className="mt-1.5 h-px rounded-full overflow-hidden" style={{ background: "var(--border-mid)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: c, transition: "width 0.9s ease" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

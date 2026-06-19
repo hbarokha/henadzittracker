@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { NutritionFood } from "@/lib/gemini";
+import CameraModal from "./CameraModal";
 
 function Spinner({ size = 5 }: { size?: number }) {
   return (
@@ -27,6 +28,9 @@ export default function AIPhotoTab({ onAdd }: Props) {
   const [quantities, setQuantities] = useState<number[]>([]);
   const [adding,     setAdding]     = useState(false);
   const [dragOver,   setDragOver]   = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
+
+  const hasCam = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   function handleFile(f: File) {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -100,19 +104,36 @@ export default function AIPhotoTab({ onAdd }: Props) {
         Upload a photo of your meal — AI will identify every item and estimate portions.
       </p>
 
+      {showCamera && (
+        <CameraModal
+          onCapture={(f) => { handleFile(f); setShowCamera(false); }}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
       {!previewUrl ? (
-        <div
-          onClick={() => inputRef.current?.click()}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
-          className={`w-full border-2 border-dashed rounded-xl py-10 flex flex-col items-center gap-2 cursor-pointer transition-colors ${
-            dragOver ? "border-emerald-400 bg-emerald-50 text-emerald-600" : "border-gray-200 text-gray-400 hover:border-emerald-400 hover:text-emerald-500"
-          }`}
-        >
-          <span className="text-4xl">📷</span>
-          <span className="text-sm font-medium">Click or drag a photo here</span>
-          <span className="text-xs">JPEG · PNG · WebP · HEIC — max 10 MB</span>
+        <div className="space-y-2">
+          <div
+            onClick={() => inputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+            className={`w-full border-2 border-dashed rounded-xl py-8 flex flex-col items-center gap-2 cursor-pointer transition-colors ${
+              dragOver ? "border-emerald-400 bg-emerald-50 text-emerald-600" : "border-gray-200 text-gray-400 hover:border-emerald-400 hover:text-emerald-500"
+            }`}
+          >
+            <span className="text-3xl">🖼️</span>
+            <span className="text-sm font-medium">Click or drag a photo here</span>
+            <span className="text-xs">JPEG · PNG · WebP · HEIC — max 10 MB</span>
+          </div>
+          {hasCam && (
+            <button
+              onClick={() => setShowCamera(true)}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-gray-200 text-gray-400 hover:border-emerald-400 hover:text-emerald-500 transition-colors text-sm font-medium"
+            >
+              <span>📷</span> Take a photo
+            </button>
+          )}
         </div>
       ) : (
         <div className="relative rounded-xl overflow-hidden">
