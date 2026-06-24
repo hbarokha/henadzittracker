@@ -188,6 +188,7 @@ export default function Home() {
   const [showProfile, setShowProfile] = useState(false);
   const [showGarminConnect, setShowGarminConnect] = useState(false);
   const [garminStatus, setGarminStatus] = useState<GarminStatus>({ connected: false, username: null });
+  const [globalLoading, setGlobalLoading] = useState(false);
 
   const isToday = selectedDate === todayIso;
 
@@ -245,6 +246,19 @@ export default function Home() {
     setGarminStatus({ connected: false, username: null });
   }
 
+  const syncGarmin = useCallback(async () => {
+    setGlobalLoading(true);
+    try {
+      await fetch("/api/garmin/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: selectedDate }),
+      });
+    } finally {
+      setGlobalLoading(false);
+    }
+  }, [selectedDate]);
+
   const totals = entries.reduce(
     (acc, e) => ({
       calories: acc.calories + (e.food?.calories ?? 0) * e.quantity,
@@ -270,14 +284,21 @@ export default function Home() {
           WebkitBackdropFilter: "blur(12px)",
         }}
       >
-        {/* Calorie progress line */}
-        <div
-          className="h-px w-full"
-          style={{
-            background: `linear-gradient(90deg, transparent 0%, var(--amber) ${calPct * 100}%, var(--border) ${calPct * 100}%, transparent 100%)`,
-            transition: "background 0.8s ease",
-          }}
-        />
+        {/* Global loading bar */}
+        {globalLoading ? (
+          <div className="loading-bar-track">
+            <div className="loading-bar-fill" style={{ background: "var(--amber)" }} />
+          </div>
+        ) : (
+          /* Calorie progress line */
+          <div
+            className="h-px w-full"
+            style={{
+              background: `linear-gradient(90deg, transparent 0%, var(--amber) ${calPct * 100}%, var(--border) ${calPct * 100}%, transparent 100%)`,
+              transition: "background 0.8s ease",
+            }}
+          />
+        )}
 
         {/* Main header row */}
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
@@ -447,7 +468,12 @@ export default function Home() {
             {garminStatus.connected ? (
               <section>
                 <SectionHead label="Vitals — Garmin Connect" />
-                <GarminDashboard date={selectedDate} foodCalories={totals.calories} />
+                <GarminDashboard
+                  date={selectedDate}
+                  foodCalories={totals.calories}
+                  onSyncStart={() => setGlobalLoading(true)}
+                  onSyncEnd={() => setGlobalLoading(false)}
+                />
               </section>
             ) : (
               <section>
@@ -473,7 +499,7 @@ export default function Home() {
             {/* AI Health Summary */}
             <section>
               <SectionHead label="AI Health Analysis" />
-              <HealthSummaryPanel date={selectedDate} />
+              <HealthSummaryPanel date={selectedDate} onSyncGarmin={garminStatus.connected ? syncGarmin : undefined} />
             </section>
 
             {/* Weight chart */}

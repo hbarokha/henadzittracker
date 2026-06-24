@@ -244,3 +244,22 @@
 .delay-200 { animation-delay: 200ms; }
 .delay-300 { animation-delay: 300ms; }
 .delay-400 { animation-delay: 400ms; }
+
+/* ── Indeterminate loading bar ───────────────────────────────────────────── */
+@keyframes loading-bar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.loading-bar-track {
+  position: relative;
+  overflow: hidden;
+  height: 2px;
+  background: var(--border-dim, rgba(255,255,255,0.06));
+}
+.loading-bar-fill {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  width: 25%;
+  animation: loading-bar 1.4s ease-in-out infinite;
+}

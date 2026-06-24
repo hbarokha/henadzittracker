@@ -10,6 +10,8 @@ import type {
 interface Props {
   date: string;
   foodCalories: number;
+  onSyncStart?: () => void;
+  onSyncEnd?: () => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -783,7 +785,7 @@ function WorkoutCard({ activity }: { activity: GarminActivity }) {
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
-export default function GarminDashboard({ date, foodCalories }: Props) {
+export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyncEnd }: Props) {
   const [daily, setDaily] = useState<GarminDaily | null>(null);
   const [sleep, setSleep] = useState<GarminSleep | null>(null);
   const [heartRate, setHeartRate] = useState<GarminHeartRate | null>(null);
@@ -838,6 +840,7 @@ export default function GarminDashboard({ date, foodCalories }: Props) {
 
   async function sync() {
     setSyncing(true);
+    onSyncStart?.();
     await fetch("/api/garmin/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -845,6 +848,7 @@ export default function GarminDashboard({ date, foodCalories }: Props) {
     });
     await loadAll();
     setSyncing(false);
+    onSyncEnd?.();
   }
 
   const activeCalories = activities.reduce((sum, a) => sum + (a.calories ?? 0), 0);
@@ -905,8 +909,17 @@ export default function GarminDashboard({ date, foodCalories }: Props) {
         </button>
       </div>
 
+      {/* Loading bar */}
+      {(loading || syncing) && (
+        <div className="loading-bar-track rounded-full">
+          <div className="loading-bar-fill" style={{ background: "#38bdf8" }} />
+        </div>
+      )}
+
       {loading && (
-        <div className="text-center py-8 text-gray-500 text-sm">Loading Garmin data…</div>
+        <div className="text-center py-6" style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>
+          {syncing ? "Syncing from Garmin…" : "Loading cached data…"}
+        </div>
       )}
 
       {!loading && !hasData && (

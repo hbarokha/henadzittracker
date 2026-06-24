@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 interface SummarySection {
   score: number;
@@ -37,6 +37,7 @@ interface HealthSummary {
 
 interface Props {
   date: string;
+  onSyncGarmin?: () => Promise<void>;
 }
 
 function scoreColor(score: number): string {
@@ -218,16 +219,23 @@ function SupplementCard({ data }: { data: SupplementAnalysis }) {
   );
 }
 
-export default function HealthSummaryPanel({ date }: Props) {
+export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recsOpen, setRecsOpen] = useState(true);
 
+  // Keep latest onSyncGarmin in a ref so it doesn't invalidate `generate` memoization
+  const syncRef = useRef(onSyncGarmin);
+  useEffect(() => { syncRef.current = onSyncGarmin; });
+
   const generate = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
     try {
+      if (force && syncRef.current) {
+        try { await syncRef.current(); } catch {}
+      }
       const resp = await fetch("/api/ai/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -236,12 +244,13 @@ export default function HealthSummaryPanel({ date }: Props) {
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");
       setSummary(data as HealthSummary);
+      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, [date]); // only date triggers re-generation; onSyncGarmin accessed via ref
 
   useEffect(() => {
     setSummary(null);
@@ -259,7 +268,7 @@ export default function HealthSummaryPanel({ date }: Props) {
 
       {/* Header */}
       <div className="px-5 py-4 flex items-center justify-between"
-        style={{ borderBottom: "1px solid var(--border)" }}>
+        style={{ borderBottom: loading ? "none" : "1px solid var(--border)" }}>
         <div className="flex items-center gap-3">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center"
             style={{ background: "rgba(139,92,246,0.15)", border: "1px solid rgba(139,92,246,0.25)" }}>
@@ -270,46 +279,51 @@ export default function HealthSummaryPanel({ date }: Props) {
               AI Health Summary
             </h2>
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              Powered by Gemini · all data combined
+              {loading ? (onSyncGarmin ? "Syncing Garmin then analyzing…" : "Analyzing your data…") : "Powered by Gemini · all data combined"}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {summary?.cached && summary.cachedAt && (
+          {summary?.cached && summary.cachedAt && !loading && (
             <span className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
               cached {new Date(summary.cachedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
             </span>
           )}
           {summary && (
             <button onClick={() => generate(true)} disabled={loading}
-              className="px-2.5 py-1 text-[11px] rounded-lg transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] rounded-lg transition-colors disabled:opacity-40"
               style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
-              title="Regenerate">
-              {loading ? "…" : "↺ Refresh"}
-            </button>
-          )}
-          {!summary && (
-            <button onClick={() => generate(false)} disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
-              style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
+              title="Sync Garmin then regenerate">
               {loading ? (
                 <>
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  Analyzing…
+                  Working…
                 </>
-              ) : (
-                <>Generate Summary</>
-              )}
+              ) : "↺ Refresh"}
+            </button>
+          )}
+          {!summary && !loading && (
+            <button onClick={() => generate(false)} disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
+              style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
+              Generate Summary
             </button>
           )}
         </div>
       </div>
 
-      {/* Loading */}
+      {/* Loading bar */}
+      {loading && (
+        <div className="loading-bar-track" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="loading-bar-fill" style={{ background: "#a78bfa" }} />
+        </div>
+      )}
+
+      {/* First-time loading (no previous summary to show) */}
       {loading && !summary && (
         <div className="px-5 py-10 flex flex-col items-center gap-3">
           <svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24"
@@ -324,8 +338,8 @@ export default function HealthSummaryPanel({ date }: Props) {
         </div>
       )}
 
-      {/* Error */}
-      {error && (
+      {/* Error (only show if no summary to fall back on) */}
+      {error && !summary && (
         <div className="px-5 py-4">
           <div className="rounded-xl p-3 flex items-start gap-2"
             style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
@@ -353,9 +367,17 @@ export default function HealthSummaryPanel({ date }: Props) {
         </div>
       )}
 
-      {/* Results */}
-      {summary && !loading && (
-        <div className="p-5 space-y-3">
+      {/* Results — visible even while refreshing (dimmed), error banner shown above if refresh failed */}
+      {summary && (
+        <div className="p-5 space-y-3" style={{ opacity: loading ? 0.45 : 1, pointerEvents: loading ? "none" : "auto", transition: "opacity 0.2s" }}>
+          {/* Refresh error inline banner */}
+          {error && (
+            <div className="rounded-xl p-3 flex items-start gap-2"
+              style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
+              <span className="flex-shrink-0 text-xs" style={{ color: "#f87171" }}>⚠</span>
+              <p className="text-xs" style={{ color: "#f87171" }}>{error} — showing previous result</p>
+            </div>
+          )}
           {/* Overall score */}
           {overallScore != null && (
             <div className="rounded-xl p-4 flex items-center gap-4"

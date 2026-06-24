@@ -91,6 +91,8 @@ function SuggestionCard({ s, onAdd, adding }: {
 
 export default function SupplementLog({ date }: Props) {
   const [items, setItems] = useState<SupplementWithLog[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadingSupps, setLoadingSupps] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [addTab, setAddTab] = useState<AddTab>("manual");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -144,13 +146,22 @@ export default function SupplementLog({ date }: Props) {
   // ── data loading ───────────────────────────────────────────────────────────
 
   async function load() {
-    const res = await fetch(`/api/supplements?date=${date}`);
-    const { supplements, log } = await res.json() as { supplements: Supplement[]; log: SLog[] };
-    const logMap = new Map(log.map((l) => [l.supplementId, l.taken]));
-    setItems(supplements.map((s) => ({ ...s, taken: logMap.get(s.id) ?? false })));
+    setLoadingSupps(true);
+    setLoadError(null);
+    try {
+      const res = await fetch(`/api/supplements?date=${date}`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const body = await res.json() as { supplements: Supplement[]; log: SLog[] };
+      const logMap = new Map(body.log.map((l) => [l.supplementId, l.taken]));
+      setItems(body.supplements.map((s) => ({ ...s, taken: logMap.get(s.id) ?? false })));
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoadingSupps(false);
+    }
   }
 
-  useEffect(() => { load(); }, [date]);
+  useEffect(() => { load(); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── barcode helpers ────────────────────────────────────────────────────────
 
@@ -872,8 +883,30 @@ export default function SupplementLog({ date }: Props) {
         </div>
       )}
 
+      {/* ── Load error ───────────────────────────────────────────────────── */}
+      {loadError && (
+        <div className="px-5 py-4">
+          <div className="rounded-xl p-3 flex items-start justify-between gap-2"
+            style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
+            <div className="flex items-start gap-2">
+              <span className="flex-shrink-0 text-xs mt-0.5" style={{ color: "#f87171" }}>⚠</span>
+              <p className="text-xs" style={{ color: "#f87171" }}>Failed to load supplements: {loadError}</p>
+            </div>
+            <button onClick={load} className="text-xs flex-shrink-0"
+              style={{ color: "#a78bfa" }}>Retry</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Loading indicator ─────────────────────────────────────────────── */}
+      {loadingSupps && items.length === 0 && (
+        <div className="loading-bar-track">
+          <div className="loading-bar-fill" style={{ background: "var(--amber)" }} />
+        </div>
+      )}
+
       {/* ── Empty state ──────────────────────────────────────────────────── */}
-      {items.length === 0 && !showAdd && !showRecs && (
+      {items.length === 0 && !showAdd && !showRecs && !loadingSupps && !loadError && (
         <div className="px-5 py-8 text-center space-y-4">
           <p className="text-3xl">💊</p>
           <div className="space-y-1">

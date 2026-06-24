@@ -495,3 +495,7 @@ Activity multipliers:
 - [x] **Supplement AI recommendations** — now includes full Garmin health context (stress, HRV, sleep, VO2 max, body comp, nutrition averages) for data-grounded suggestions
 - [x] **3-tab mobile layout** — Overview (Garmin + AI analysis), Nutrition (food log + add meal), Supplements; sticky tab bar with amber active indicator; compact DailySummary on Overview, full ring view on Nutrition tab
 - [x] **Design system consistency** — HealthSummaryPanel and SupplementLog fully rewritten to CSS variables; GarminDashboard unified via global `.text-white → var(--text)` override; all gray Tailwind classes mapped to warm-dark palette in globals.css
+- [x] **Indeterminate loading bars** — sky-blue bar on GarminDashboard, purple bar on HealthSummaryPanel, amber bar in global header; animated via `.loading-bar-track` / `.loading-bar-fill` CSS classes in globals.css
+- [x] **Garmin-first AI refresh** — clicking ↺ on the AI health summary syncs Garmin data for the selected date first, then re-generates; `syncRef` pattern avoids stale-closure re-triggers
+- [x] **AI summary stays visible during refresh** — content dims to 0.45 opacity with `pointerEvents: none` while regenerating; inline error banner shown above dimmed content if refresh fails
+- [x] **Supplement error handling** — load() wrapped in try/catch; amber loading bar while fetching; error banner with Retry button if API call fails
