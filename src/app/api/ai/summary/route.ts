@@ -202,11 +202,13 @@ export async function POST(req: Request) {
   const weekDates  = dateRange(week7Start, today);
   const monDates   = dateRange(mon30Start, today);
 
-  const [allEntries, profile, supplements, suppLog, weightRows] = await Promise.all([
+  // getLogForDate reads and conditionally writes the same blob as getAllSupplements —
+  // run it first to avoid a concurrent-write race on the supplements blob.
+  const suppLog = await getLogForDate(today);
+  const [allEntries, profile, supplements, weightRows] = await Promise.all([
     getAllEntries(),
     loadProfile(),
     getAllSupplements(),
-    getLogForDate(today),
     getRecentWeightEntries(35),
   ]);
 

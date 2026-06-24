@@ -69,12 +69,14 @@ export async function deleteSupplement(id: string): Promise<void> {
 export async function getLogForDate(date: string): Promise<SupplementLog[]> {
   const data = await loadData();
   const active = new Set(data.supplements.filter((s) => s.active).map((s) => s.id));
+  let dirty = false;
   for (const id of active) {
     if (!data.log.find((l) => l.supplementId === id && l.date === date)) {
       data.log.push({ supplementId: id, date, taken: false, takenAt: null });
+      dirty = true;
     }
   }
-  await saveData(data);
+  if (dirty) await saveData(data);
   return data.log.filter((l) => l.date === date && active.has(l.supplementId));
 }
 

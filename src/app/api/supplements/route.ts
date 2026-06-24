@@ -5,7 +5,9 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get("date");
   if (date) {
-    const [supplements, log] = await Promise.all([getAllSupplements(), getLogForDate(date)]);
+    // Sequential: getLogForDate reads and conditionally writes the same blob as getAllSupplements
+    const log = await getLogForDate(date);
+    const supplements = await getAllSupplements();
     return NextResponse.json({ supplements, log });
   }
   return NextResponse.json(await getAllSupplements());
