@@ -43,7 +43,9 @@ export async function POST(req: Request) {
     // ── identify from text prompt ────────────────────────────────────────────
     if (body.action === "identify-text") {
       const { prompt } = body as { prompt: string };
-      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.
+      const profile = await loadProfile();
+      const goalLine = profile?.goal ? `\nUser's health goal: ${profile.goal}` : "";
+      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}
 
 Return JSON:
 {
@@ -51,7 +53,7 @@ Return JSON:
 }
 
 Rules:
-- Only recommend evidence-backed supplements
+- Only recommend evidence-backed supplements${profile?.goal ? "\n- Align suggestions toward the user's stated health goal" : ""}
 - Dose must be a realistic, commonly available amount
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any

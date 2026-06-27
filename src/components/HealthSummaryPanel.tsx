@@ -25,7 +25,16 @@ interface SupplementAnalysis {
   interactions: string[];
 }
 
+interface BiologicalAge {
+  estimate: number;
+  delta: number;
+  confidence: "high" | "medium" | "low";
+  keyFactors: string[];
+  topImprovement: string;
+}
+
 interface HealthSummary {
+  biologicalAge?: BiologicalAge;
   today: SummarySection;
   week: SummarySection;
   month: SummarySection;
@@ -219,6 +228,78 @@ function SupplementCard({ data }: { data: SupplementAnalysis }) {
   );
 }
 
+function BioAgeCard({ data }: { data: BiologicalAge }) {
+  const [open, setOpen] = useState(false);
+  const younger = data.delta < 0;
+  const chronologicalAge = data.estimate - data.delta;
+  const accentColor = younger ? "#34d399" : data.delta <= 3 ? "#fbbf24" : "#f87171";
+  const confidenceColors: Record<string, string> = { high: "#34d399", medium: "#fbbf24", low: "var(--text-dim)" };
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: younger ? "rgba(52,211,153,0.05)" : "rgba(248,113,113,0.05)", border: `1px solid ${accentColor}33` }}>
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-4 px-4 py-3 text-left">
+        <div className="flex flex-col items-center shrink-0 w-12">
+          <span className="text-2xl font-bold tabular-nums leading-none"
+            style={{ color: accentColor, fontFamily: "var(--font-hero)" }}>{data.estimate}</span>
+          <span className="text-[9px] uppercase tracking-wide mt-0.5"
+            style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>bio age</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-sm">🧬</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide"
+              style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Biological Age</span>
+            <span className="text-xs font-bold ml-auto tabular-nums px-2 py-0.5 rounded-full"
+              style={{ color: accentColor, background: `${accentColor}18`, fontFamily: "var(--font-mono)" }}>
+              {younger ? "" : "+"}{data.delta} yrs
+            </span>
+          </div>
+          <p className="text-sm leading-snug" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>
+            {younger
+              ? `${Math.abs(data.delta)} years younger than your chronological age of ${chronologicalAge}`
+              : data.delta === 0
+                ? `Biologically on par with your chronological age of ${chronologicalAge}`
+                : `${data.delta} years older than your chronological age of ${chronologicalAge}`}
+          </p>
+        </div>
+        <svg className={`w-4 h-4 flex-shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          style={{ color: "var(--text-dim)" }}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 pt-3 space-y-3" style={{ borderTop: `1px solid ${accentColor}22` }}>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-wide" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Confidence:</span>
+            <span className="text-[9px] font-semibold uppercase" style={{ color: confidenceColors[data.confidence] ?? "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{data.confidence}</span>
+          </div>
+          {data.keyFactors.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Key factors</p>
+              {data.keyFactors.map((f, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 text-xs" style={{ color: accentColor }}>◈</span>
+                  <span className="text-xs leading-snug" style={{ color: "var(--text-muted)" }}>{f}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {data.topImprovement && (
+            <div className="rounded-lg px-3 py-2.5 space-y-1"
+              style={{ background: "rgba(245,166,35,0.08)", border: "1px solid rgba(245,166,35,0.18)" }}>
+              <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>Top improvement</p>
+              <p className="text-xs leading-snug" style={{ color: "var(--text-muted)" }}>{data.topImprovement}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -394,6 +475,10 @@ export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
                 </p>
               </div>
             </div>
+          )}
+
+          {summary.biologicalAge && (
+            <BioAgeCard data={summary.biologicalAge} />
           )}
 
           <SectionCard label="Today"       icon="📅" data={summary.today} defaultOpen />

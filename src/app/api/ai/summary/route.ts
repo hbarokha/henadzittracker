@@ -231,7 +231,7 @@ export async function POST(req: Request) {
       buildSnapshots(monDates, allEntries),
     ]),
     readGarminCache<{ weightKg: number | null; bmi: number | null; bodyFatPct: number | null; muscleMassKg: number | null; bodyWaterPct: number | null }>(today, "bodycomp"),
-    readGarminCache<{ vo2MaxRunning: number | null; vo2MaxCycling: number | null }>(today, "usermetrics"),
+    readGarminCache<{ vo2MaxRunning: number | null; vo2MaxCycling: number | null; fitnessAge: number | null; trainingStatus: string | null }>(today, "usermetrics"),
   ]);
 
   const todaySnap = todaySnaps[0];
@@ -294,6 +294,8 @@ BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activi
 ## FITNESS METRICS (Garmin account-level)
 VO2 Max (running): ${na(userMetrics?.vo2MaxRunning)} ml/kg/min
 VO2 Max (cycling): ${na(userMetrics?.vo2MaxCycling)} ml/kg/min
+Garmin Fitness Age: ${na(userMetrics?.fitnessAge)} years (vs chronological age ${profile?.age ?? "unknown"})
+Training status: ${na(userMetrics?.trainingStatus)}
 
 ## BODY COMPOSITION (latest Garmin scale reading for ${today})
 ${todayBodyComp
@@ -405,6 +407,13 @@ Weight trend: ${weightChange != null
 
 Return a JSON object with EXACTLY this structure (no markdown, no extra text):
 {
+  "biologicalAge": {
+    "estimate": <integer — your best estimate of biological age in years, based on all available biomarkers>,
+    "delta": <integer — estimate minus chronological age; negative means biologically younger>,
+    "confidence": "high|medium|low",
+    "keyFactors": ["<biomarker or behavior that most influences this estimate — cite the actual value, e.g. 'VO2 max 42 ml/kg/min is excellent for age 49'>"],
+    "topImprovement": "<single most impactful action this user can take to lower biological age — be specific and cite a metric>"
+  },
   "today": {
     "score": <integer 1–10>,
     "headline": "<single punchy sentence summarizing today>",
@@ -438,7 +447,8 @@ Return a JSON object with EXACTLY this structure (no markdown, no extra text):
 
 Scoring rules:
 - 10 = all metrics optimal; weight sleep quality, HRV, nutrition adherence, recovery, and training load balance
-- User's stated health goal: "${profile?.goal ?? "not specified"}" — align ALL recommendations, highlights, and supplement advice toward this goal
+- User's stated health goal: "${profile?.goal ?? "not specified"}" — align ALL recommendations, highlights, supplement advice, AND the biologicalAge.topImprovement toward this goal
+- biologicalAge: use VO2 max, resting HR, HRV, sleep score/duration, body fat%, stress, and activity levels as primary biomarkers. Reference Garmin Fitness Age if available but give your own independent estimate. If data is sparse set confidence: "low"
 - highlights: 1–3 items, each citing a metric. concerns: 0–3 items, each citing a metric
 - supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number
 - supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest something already in the stack

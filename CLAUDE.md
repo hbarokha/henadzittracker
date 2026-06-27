@@ -84,12 +84,13 @@ the official developer program is currently suspended as of 2024).
 - Connect button + credential entry (email/password stored encrypted server-side)
 
 ### Personal Profile
-- User profile panel — age, height, weight, sex, activity level
+- User profile panel — age, height, weight, sex, activity level, and **health goal** (free text, e.g. "improve metabolism, reduce biological age")
 - BMR (Basal Metabolic Rate) calculated via Mifflin-St Jeor formula
 - TDEE (Total Daily Energy Expenditure) derived from BMR × activity multiplier
 - Auto-suggest daily calorie goal from TDEE
 - Body weight log — track weight over time with trend line
 - BMI calculated and displayed with healthy-range indicator
+- Health goal is injected into every Gemini request (AI summary, supplement recommendations, supplement tips, supplement text identification)
 
 ### AI Health Summary
 - Auto-generates on page load via Gemini — no button press required
@@ -195,7 +196,7 @@ src/
     AIBarcodeTab.tsx                Barcode scan/entry → Open Food Facts → add
     FoodLog.tsx                     Log grouped by meal, CSV export button
     FoodSearch.tsx                  (reserved)
-    HealthSummaryPanel.tsx          AI health summary (CSS-variable styled); today/week/month scores + supplement analysis + recommendations
+    HealthSummaryPanel.tsx          AI health summary (CSS-variable styled); biological age card + today/week/month scores + supplement analysis + recommendations
     ProfilePanel.tsx                Age / height / weight / sex / activity / health goal + BMR/TDEE
     SupplementLog.tsx               Daily checklist + library; CSS-variable styled; adherence progress bar; inline tip display (line-clamped); ✨ Tips button generates per-supplement AI guidance; inline edit for dose/unit/pills/time
     WeightChart.tsx                 Body weight trend line chart
@@ -507,3 +508,5 @@ Activity multipliers:
 - [x] **Supplement per-supplement AI tips** — "✨ Tips" button in supplement panel header calls `POST /api/ai/supplements` with `action=generate-tips`; Gemini returns personalised `usageTip` + `description` per supplement based on user's Garmin data and health goal; saved back to supplement records and shown inline (clamped to 2 lines) below the dose
 - [x] **Supplement adherence progress bar** — thin progress track below supplement panel header shows taken/total ratio with green→amber gradient and glow; percentage label on right; animates on check-off
 - [x] **UI polish pass** — section headers across all tabs now have a small amber accent bar on the left; FoodLog empty state uses a warm amber-bordered circle behind the emoji; supplement tip text clamped to 2 lines with full text in expandable info panel
+- [x] **Biological age analysis** — Gemini estimates biological age from VO2 max, HRV, resting HR, sleep score, body fat%, stress, and activity; returns `estimate`, `delta` (vs chronological age), `confidence`, `keyFactors[]`, and `topImprovement`; displayed as a collapsible card in HealthSummaryPanel between overall score and Today section; Garmin `fitnessAge` and `trainingStatus` now also included in the summary prompt
+- [x] **Global health goal in all Gemini calls** — `profile.goal` now injected into AI health summary, supplement recommend, supplement generate-tips, AND supplement identify-text; all recommendations, highlights, and supplement suggestions are aligned toward the user's stated goal
