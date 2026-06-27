@@ -67,14 +67,19 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
   if (entries.length === 0) {
     return (
       <div
-        className="flex flex-col items-center justify-center py-20 text-center rounded-xl"
+        className="flex flex-col items-center justify-center py-16 text-center rounded-xl"
         style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}
       >
-        <span className="text-5xl mb-4 opacity-40">🍽️</span>
+        <div className="relative mb-5">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(245,166,35,0.12)", border: "1px solid rgba(245,166,35,0.25)", boxShadow: "0 0 20px rgba(245,166,35,0.1)" }}>
+            <span className="text-3xl">🍽️</span>
+          </div>
+        </div>
         <p className="font-semibold text-base" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
           Nothing logged yet
         </p>
-        <p className="text-sm mt-1.5 max-w-xs" style={{ color: "var(--text-muted)" }}>
+        <p className="text-sm mt-1.5 max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
           Describe a meal or upload a photo — AI will estimate the nutrition.
         </p>
       </div>

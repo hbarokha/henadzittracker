@@ -8,6 +8,7 @@ export interface UserProfile {
   weightKg: number;
   sex: "male" | "female";
   activityLevel: ActivityLevel;
+  goal?: string;
   updatedAt: string;
 }
 

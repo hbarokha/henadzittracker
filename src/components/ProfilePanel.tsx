@@ -9,6 +9,7 @@ interface ProfileData {
   weightKg: number;
   sex: "male" | "female";
   activityLevel: ActivityLevel;
+  goal?: string;
   updatedAt: string;
   bmr: number;
   tdee: number;
@@ -41,7 +42,7 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     age: 30, heightCm: 175, weightKg: 75, sex: "male" as "male" | "female",
-    activityLevel: "moderate" as ActivityLevel,
+    activityLevel: "moderate" as ActivityLevel, goal: "",
   });
 
   useEffect(() => {
@@ -50,7 +51,7 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
         setProfile(data);
         setForm({
           age: data.age, heightCm: data.heightCm, weightKg: data.weightKg,
-          sex: data.sex, activityLevel: data.activityLevel,
+          sex: data.sex, activityLevel: data.activityLevel, goal: data.goal ?? "",
         });
       } else {
         setEditing(true);
@@ -118,6 +119,12 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
                     <span className="text-white font-medium">{v}</span>
                   </div>
                 ))}
+                {profile.goal && (
+                  <div className="pt-1 border-t border-gray-700">
+                    <span className="text-gray-400 block text-xs mb-0.5">Goal</span>
+                    <span className="text-white font-medium">{profile.goal}</span>
+                  </div>
+                )}
               </div>
 
               <button
@@ -171,6 +178,17 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
                     <option key={k} value={k}>{v}</option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Health goal</label>
+                <input
+                  type="text"
+                  value={form.goal}
+                  onChange={(e) => setForm((f) => ({ ...f, goal: e.target.value }))}
+                  placeholder="e.g. Build muscle and improve recovery"
+                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
+                />
               </div>
 
               <div className="flex gap-3 pt-1">

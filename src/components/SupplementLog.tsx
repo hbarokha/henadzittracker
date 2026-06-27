@@ -126,7 +126,16 @@ export default function SupplementLog({ date }: Props) {
   const [recsError, setRecsError] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
 
+  // Generate tips
+  const [tipsLoading, setTipsLoading] = useState(false);
+  const [tipsError, setTipsError] = useState<string | null>(null);
+
   const [saving, setSaving] = useState(false);
+
+  // Edit
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{ dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay }>({ dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
+  const [editSaving, setEditSaving] = useState(false);
 
   // Barcode tab
   const bcVideoRef = useRef<HTMLVideoElement>(null);
@@ -325,6 +334,32 @@ export default function SupplementLog({ date }: Props) {
     await load();
   }
 
+  function startEdit(s: SupplementWithLog) {
+    setEditingId(s.id);
+    setEditForm({ dose: String(s.dose), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay });
+    setExpandedId(null);
+  }
+
+  async function saveEdit() {
+    if (!editingId || !editForm.dose) return;
+    setEditSaving(true);
+    await fetch("/api/supplements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "update",
+        id: editingId,
+        dose: Number(editForm.dose),
+        unit: editForm.unit,
+        pills: Number(editForm.pills) || 1,
+        timeOfDay: editForm.timeOfDay,
+      }),
+    });
+    setEditSaving(false);
+    setEditingId(null);
+    await load();
+  }
+
   // ── AI: describe ───────────────────────────────────────────────────────────
 
   async function runDescribe() {
@@ -390,6 +425,37 @@ export default function SupplementLog({ date }: Props) {
     }
   }
 
+  // ── AI: generate tips ─────────────────────────────────────────────────────
+
+  async function generateTips() {
+    setTipsLoading(true);
+    setTipsError(null);
+    try {
+      const resp = await fetch("/api/ai/supplements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "generate-tips" }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      const tips: { id: string; usageTip: string; description: string }[] = data.tips ?? [];
+      await Promise.all(
+        tips.map((t) =>
+          fetch("/api/supplements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "update", id: t.id, usageTip: t.usageTip, description: t.description }),
+          })
+        )
+      );
+      await load();
+    } catch (e) {
+      setTipsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTipsLoading(false);
+    }
+  }
+
   // ── AI: recommendations ────────────────────────────────────────────────────
 
   async function loadRecommendations() {
@@ -440,8 +506,7 @@ export default function SupplementLog({ date }: Props) {
     <div className="rounded-2xl overflow-hidden"
       style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       {/* Header */}
-      <div className="px-5 py-4 flex items-center justify-between"
-        style={{ borderBottom: "1px solid var(--border)" }}>
+      <div className="px-5 pt-4 pb-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="text-lg">💊</span>
           <div>
@@ -449,12 +514,29 @@ export default function SupplementLog({ date }: Props) {
               style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>Supplements</h3>
             {items.length > 0 && (
               <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                {takenCount}/{items.length} taken today
+                <span style={{ color: takenCount === items.length ? "#34d399" : "var(--text-dim)" }}>{takenCount}/{items.length}</span> taken today
               </p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {items.length > 0 && (
+            <button
+              onClick={generateTips}
+              disabled={tipsLoading}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+              style={{ background: "rgba(56,189,248,0.1)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.2)" }}
+              title="Generate how/when tips for your stack"
+            >
+              {tipsLoading ? (
+                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              ) : "✨"}
+              {tipsLoading ? "Generating…" : "Tips"}
+            </button>
+          )}
           <button
             onClick={() => { setShowRecs((v) => !v); if (!showRecs && recommendations.length === 0) loadRecommendations(); }}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
@@ -480,6 +562,28 @@ export default function SupplementLog({ date }: Props) {
           </button>
         </div>
       </div>
+      {/* Adherence progress bar */}
+      {items.length > 0 && (
+        <div className="px-5 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${Math.max((takenCount / items.length) * 100, takenCount > 0 ? 4 : 0)}%`,
+                  background: takenCount === items.length
+                    ? "#34d399"
+                    : "linear-gradient(90deg, #34d399, #fbbf24)",
+                  boxShadow: takenCount > 0 ? "0 0 8px rgba(52,211,153,0.5)" : "none",
+                }}
+              />
+            </div>
+            <span className="text-[10px] tabular-nums shrink-0" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+              {Math.round((takenCount / items.length) * 100)}%
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Add panel ───────────────────────────────────────────────────────── */}
       {showAdd && (
@@ -898,6 +1002,17 @@ export default function SupplementLog({ date }: Props) {
         </div>
       )}
 
+      {/* ── Tips error ───────────────────────────────────────────────────── */}
+      {tipsError && (
+        <div className="px-5 py-3">
+          <div className="rounded-xl p-3 flex items-start justify-between gap-2"
+            style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
+            <p className="text-xs" style={{ color: "#f87171" }}>Tips failed: {tipsError}</p>
+            <button onClick={() => setTipsError(null)} className="text-xs flex-shrink-0" style={{ color: "var(--text-dim)" }}>✕</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Loading indicator ─────────────────────────────────────────────── */}
       {loadingSupps && items.length === 0 && (
         <div className="loading-bar-track">
@@ -979,6 +1094,11 @@ export default function SupplementLog({ date }: Props) {
                     {s.brand ? <span className="uppercase tracking-wide mr-1.5" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
                     {s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}
                   </p>
+                  {s.usageTip && (
+                    <p className="text-xs mt-0.5 leading-snug line-clamp-2" style={{ color: "var(--text-muted)" }}>
+                      {s.usageTip}
+                    </p>
+                  )}
                 </div>
 
                 {/* Info toggle */}
@@ -996,6 +1116,18 @@ export default function SupplementLog({ date }: Props) {
                     </svg>
                   </button>
                 )}
+
+                {/* Edit */}
+                <button
+                  onClick={() => editingId === s.id ? setEditingId(null) : startEdit(s)}
+                  className="p-1 rounded transition-all"
+                  style={{ color: editingId === s.id ? "#a78bfa" : "var(--text-dim)" }}
+                  title="Edit"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
 
                 {/* Delete */}
                 <button
@@ -1015,6 +1147,76 @@ export default function SupplementLog({ date }: Props) {
                 <div className="px-5 pb-3 space-y-2" style={{ background: "var(--bg-raised)" }}>
                   {s.description && <InfoBadge text={s.description} />}
                   {s.usageTip && <TipBadge text={s.usageTip} />}
+                </div>
+              )}
+
+              {/* Inline edit panel */}
+              {editingId === s.id && (
+                <div className="px-5 pb-4 pt-2 space-y-3"
+                  style={{ background: "var(--bg-raised)", borderTop: "1px solid var(--border-dim)" }}>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide"
+                        style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Dose</p>
+                      <input
+                        type="number"
+                        value={editForm.dose}
+                        onChange={(e) => setEditForm((f) => ({ ...f, dose: e.target.value }))}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide"
+                        style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Unit</p>
+                      <select
+                        value={editForm.unit}
+                        onChange={(e) => setEditForm((f) => ({ ...f, unit: e.target.value as SupplementUnit }))}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}>
+                        {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map((u) => <option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide"
+                        style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills</p>
+                      <input
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={editForm.pills}
+                        onChange={(e) => setEditForm((f) => ({ ...f, pills: e.target.value }))}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-[9px] uppercase tracking-wide"
+                        style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
+                      <select
+                        value={editForm.timeOfDay}
+                        onChange={(e) => setEditForm((f) => ({ ...f, timeOfDay: e.target.value as TimeOfDay }))}
+                        className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}>
+                        {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setEditingId(null)}
+                      className="flex-1 py-1.5 rounded-lg text-xs transition-colors"
+                      style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveEdit}
+                      disabled={editSaving || !editForm.dose}
+                      className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)" }}>
+                      {editSaving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

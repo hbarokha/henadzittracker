@@ -87,9 +87,10 @@ function IconSupplements() {
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 mb-4">
+      <div className="w-0.5 h-3 rounded-full shrink-0" style={{ background: "var(--amber)" }} />
       <span
-        className="text-[9px] tracking-[0.22em] uppercase shrink-0"
-        style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}
+        className="text-[10px] tracking-[0.18em] uppercase shrink-0"
+        style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}
       >
         {label}
       </span>

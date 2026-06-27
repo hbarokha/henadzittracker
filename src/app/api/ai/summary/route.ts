@@ -288,7 +288,7 @@ Tailor ALL recommendations to what is still actionable right now. Do not recomme
 ## USER PROFILE
 ${profile
   ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg
-BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}`
+BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : ""}`
   : "Not configured — base analysis on Garmin data only"}
 
 ## FITNESS METRICS (Garmin account-level)
@@ -438,6 +438,7 @@ Return a JSON object with EXACTLY this structure (no markdown, no extra text):
 
 Scoring rules:
 - 10 = all metrics optimal; weight sleep quality, HRV, nutrition adherence, recovery, and training load balance
+- User's stated health goal: "${profile?.goal ?? "not specified"}" — align ALL recommendations, highlights, and supplement advice toward this goal
 - highlights: 1–3 items, each citing a metric. concerns: 0–3 items, each citing a metric
 - supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number
 - supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest something already in the stack
@@ -456,7 +457,7 @@ Scoring rules:
 
   try {
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

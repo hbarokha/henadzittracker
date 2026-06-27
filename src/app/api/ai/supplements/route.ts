@@ -5,7 +5,7 @@ import { getAllEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
 
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
+const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
 const SUPP_SCHEMA = `{
   "name": "string — exact supplement name (no brand prefix)",
@@ -135,7 +135,7 @@ Rules:
         "## User Profile",
         profile
           ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg | Latest tracked weight: ${na(latestWeight, " kg")}
-BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}`
+BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : ""}`
           : "Not configured",
         "",
         "## Fitness Metrics",
@@ -178,13 +178,66 @@ Return JSON:
 Rules:
 - Do NOT suggest anything already in the "Current Supplement Stack"
 - Every recommendation's "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
-- Prioritise the most impactful gaps first based on the data
+- Prioritise the most impactful gaps first based on the data; if a health goal is stated, weight recommendations toward it
 - Consider age, sex, weight, activity level, VO2 max, body composition, nutrition gaps (low protein/fat/calories), sleep quality, HRV, and stress together
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([{ text: systemPrompt }]);
+      return NextResponse.json(result);
+    }
+
+    // ── generate how/when tips for existing stack ────────────────────────────
+    if (body.action === "generate-tips") {
+      const [profile, allSupps, daily, sleep, hrv] = await Promise.all([
+        loadProfile(),
+        getAllSupplements(),
+        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-daily.json`),
+        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-sleep.json`),
+        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-hrv.json`),
+      ]);
+
+      if (!allSupps.length) return NextResponse.json({ tips: [] });
+
+      const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
+      const stackLines = allSupps.map((s) =>
+        `- id:${s.id} | ${[s.brand, s.name].filter(Boolean).join(" ")} ${s.dose}${s.unit}${s.pills && s.pills > 1 ? ` × ${s.pills} pills` : ""} (currently: ${s.timeOfDay})`
+      ).join("\n");
+
+      const contextLines = [
+        profile ? `User: ${profile.age}y ${profile.sex}, ${profile.weightKg}kg, activity: ${profile.activityLevel}${profile.goal ? `, goal: ${profile.goal}` : ""}` : "",
+        daily ? `Steps: ${na(daily.steps)} | Active cal: ${na(daily.activeCalories)} | Stress: ${na(daily.avgStressLevel, "/100")} | Resting HR: ${na(daily.restingHeartRate, " bpm")}` : "",
+        sleep ? `Sleep: ${sleep.totalSleepSeconds ? ((sleep.totalSleepSeconds as number) / 3600).toFixed(1) + "h" : "no data"} | Score: ${na(sleep.sleepScore)} | Deep: ${sleep.deepSleepSeconds ? Math.round((sleep.deepSleepSeconds as number) / 60) + "min" : "—"} | HRV status: ${na(sleep.hrvStatus)}` : "",
+        hrv ? `HRV: ${na(hrv.lastNight, " ms")} | Status: ${na(hrv.status)}` : "",
+      ].filter(Boolean).join("\n");
+
+      const prompt = `You are a certified supplement and nutrition expert. For each supplement in the user's stack below, provide personalized guidance on HOW and WHEN to take it, considering the user's health data and goal.
+
+## User's supplement stack
+${stackLines}
+
+## Health context
+${contextLines || "No health data available"}
+
+Return JSON with EXACTLY this shape:
+{
+  "tips": [
+    {
+      "id": "<supplement id from the list above>",
+      "usageTip": "<1–2 sentences: optimal timing (morning/with food/post-workout/before bed etc), whether to take with food or fat, any interactions to avoid, cycling if relevant>",
+      "description": "<1–2 sentences: what this supplement does and its main benefit for THIS user based on their data/goal>"
+    }
+  ]
+}
+
+Rules:
+- Return one entry per supplement in the stack — use the exact id values from the list
+- usageTip must be specific and actionable, referencing their goal or a data signal when relevant (e.g. "Take in the evening — your HRV of 38ms suggests your nervous system benefits from nighttime magnesium")
+- description must be concise and relevant to this specific user, not generic
+- Return only valid JSON, no markdown`;
+
+      const result = await callGemini([{ text: prompt }]);
       return NextResponse.json(result);
     }
 

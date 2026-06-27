@@ -181,6 +181,7 @@ src/
         image/route.ts              POST — image → nutrition (Gemini)
         barcode/route.ts            GET  — barcode → nutrition (Open Food Facts)
         summary/route.ts            POST — AI health summary (Gemini)
+        supplements/route.ts        POST — supplement actions: identify-text, identify-image, recommend, generate-tips
     globals.css
     layout.tsx
     page.tsx                        3-tab SPA: Overview / Nutrition / Supplements; date nav, goals, streak, TabBar
@@ -195,8 +196,8 @@ src/
     FoodLog.tsx                     Log grouped by meal, CSV export button
     FoodSearch.tsx                  (reserved)
     HealthSummaryPanel.tsx          AI health summary (CSS-variable styled); today/week/month scores + supplement analysis + recommendations
-    ProfilePanel.tsx                Age / height / weight / sex / activity + BMR/TDEE
-    SupplementLog.tsx               Daily checklist + library; CSS-variable styled; empty state with AI recommendations CTA
+    ProfilePanel.tsx                Age / height / weight / sex / activity / health goal + BMR/TDEE
+    SupplementLog.tsx               Daily checklist + library; CSS-variable styled; adherence progress bar; inline tip display (line-clamped); ✨ Tips button generates per-supplement AI guidance; inline edit for dose/unit/pills/time
     WeightChart.tsx                 Body weight trend line chart
     GarminConnectModal.tsx          Email/password login form + session status
     GarminDashboard.tsx             All Garmin metrics + workout cards (single file)
@@ -499,3 +500,10 @@ Activity multipliers:
 - [x] **Garmin-first AI refresh** — clicking ↺ on the AI health summary syncs Garmin data for the selected date first, then re-generates; `syncRef` pattern avoids stale-closure re-triggers
 - [x] **AI summary stays visible during refresh** — content dims to 0.45 opacity with `pointerEvents: none` while regenerating; inline error banner shown above dimmed content if refresh fails
 - [x] **Supplement error handling** — load() wrapped in try/catch; amber loading bar while fetching; error banner with Retry button if API call fails
+- [x] **Supplement inline edit** — pencil icon on each supplement row opens an inline form to change dose, unit, pills, and time of day; pre-filled with current values; saves via `action=update` POST
+- [x] **Gemini model upgrade** — all AI routes switched from `gemini-2.5-flash-lite` to `gemini-2.5-flash` for better recommendations and fewer 503 errors
+- [x] **Supplement blob race-condition fix** — `getLogForDate` now only writes back when new log entries are actually created (`dirty` flag); GET routes changed from `Promise.all([getAllSupplements(), getLogForDate()])` to sequential calls to prevent concurrent writes overwriting each other
+- [x] **Health goal field** — optional free-text goal in user profile (e.g. "build muscle and improve recovery"); persisted to `profile.json`; injected into all Gemini prompts (AI summary, supplement recommend, supplement tips) to align recommendations toward the goal
+- [x] **Supplement per-supplement AI tips** — "✨ Tips" button in supplement panel header calls `POST /api/ai/supplements` with `action=generate-tips`; Gemini returns personalised `usageTip` + `description` per supplement based on user's Garmin data and health goal; saved back to supplement records and shown inline (clamped to 2 lines) below the dose
+- [x] **Supplement adherence progress bar** — thin progress track below supplement panel header shows taken/total ratio with green→amber gradient and glow; percentage label on right; animates on check-off
+- [x] **UI polish pass** — section headers across all tabs now have a small amber accent bar on the left; FoodLog empty state uses a warm amber-bordered circle behind the emoji; supplement tip text clamped to 2 lines with full text in expandable info panel

@@ -1,4 +1,4 @@
-const MODEL = "gemini-2.5-flash-lite";
+const MODEL = "gemini-2.5-flash";
 const BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 
 export interface NutritionFood {
