@@ -15,8 +15,10 @@ export async function GET(req: Request) {
     const supplements = await getAllSupplements();
     // Fix any stored supplements that have an invalid timeOfDay (e.g. "daily" from AI)
     const broken = supplements.filter((s) => !VALID_TIMES.has(s.timeOfDay));
-    await Promise.all(broken.map((s) => updateSupplement(s.id, { timeOfDay: "any" })));
-    if (broken.length) broken.forEach((s) => { s.timeOfDay = "any"; });
+    for (const s of broken) {
+      s.timeOfDay = "any";
+      await updateSupplement(s.id, { timeOfDay: "any" });
+    }
     return NextResponse.json({ supplements, log });
   }
   return NextResponse.json(await getAllSupplements());
@@ -32,10 +34,13 @@ export async function POST(req: Request) {
     await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: sanitizeTime(body.timeOfDay) });
     return NextResponse.json({ ok: true });
   }
+  if (!body.name?.trim()) return NextResponse.json({ error: "Name required" }, { status: 400 });
+  const parsedDose = Number(body.dose);
+  if (!body.dose || isNaN(parsedDose) || parsedDose <= 0) return NextResponse.json({ error: "Valid dose required" }, { status: 400 });
   const entry = await addSupplement({
-    name: body.name,
+    name: body.name.trim(),
     brand: body.brand || undefined,
-    dose: Number(body.dose),
+    dose: parsedDose,
     unit: body.unit,
     pills: body.pills ? Number(body.pills) : undefined,
     timeOfDay: sanitizeTime(body.timeOfDay),

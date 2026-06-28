@@ -28,6 +28,7 @@ interface AISuggestion {
 }
 
 const TIME_ORDER: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
+const VALID_TOD = new Set<string>(TIME_ORDER);
 const TIME_LABELS: Record<TimeOfDay, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", any: "Anytime" };
 const TIME_ICONS: Record<TimeOfDay, string> = { morning: "🌅", afternoon: "☀️", evening: "🌙", any: "⏰" };
 const TIME_COLORS: Record<TimeOfDay, string> = { morning: "text-amber-400", afternoon: "text-sky-400", evening: "text-violet-400", any: "text-gray-400" };
@@ -98,6 +99,10 @@ export default function SupplementLog({ date }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showRecs, setShowRecs] = useState(false);
 
+  // Retake
+  const [retakeId, setRetakeId] = useState<string | null>(null);
+  const [retakeTime, setRetakeTime] = useState<TimeOfDay>("morning");
+
   // Manual form
   const [manualForm, setManualForm] = useState({
     name: "", brand: "", dose: "", unit: "mg" as SupplementUnit, pills: "1", timeOfDay: "morning" as TimeOfDay,
@@ -134,7 +139,7 @@ export default function SupplementLog({ date }: Props) {
 
   // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay }>({ dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
+  const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
   const [editSaving, setEditSaving] = useState(false);
 
   // Barcode tab
@@ -162,7 +167,11 @@ export default function SupplementLog({ date }: Props) {
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const body = await res.json() as { supplements: Supplement[]; log: SLog[] };
       const logMap = new Map(body.log.map((l) => [l.supplementId, l.taken]));
-      setItems(body.supplements.map((s) => ({ ...s, taken: logMap.get(s.id) ?? false })));
+      setItems(body.supplements.map((s) => ({
+        ...s,
+        timeOfDay: VALID_TOD.has(s.timeOfDay) ? s.timeOfDay : "any",
+        taken: logMap.get(s.id) ?? false,
+      })));
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -308,6 +317,7 @@ export default function SupplementLog({ date }: Props) {
   }
 
   async function saveSuggestion(s: AISuggestion) {
+    if (!s.name?.trim() || !s.dose) return;
     const key = `${s.name}-${s.dose}`;
     setAddingId(key);
     await fetch("/api/supplements", {
@@ -334,14 +344,36 @@ export default function SupplementLog({ date }: Props) {
     await load();
   }
 
+  async function doRetake(s: SupplementWithLog) {
+    if (!s.name?.trim() || !s.dose) return;
+    setSaving(true);
+    await fetch("/api/supplements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: s.name,
+        brand: s.brand || undefined,
+        dose: s.dose,
+        unit: s.unit,
+        pills: s.pills,
+        timeOfDay: retakeTime,
+        description: s.description,
+        usageTip: s.usageTip,
+      }),
+    });
+    setSaving(false);
+    setRetakeId(null);
+    await load();
+  }
+
   function startEdit(s: SupplementWithLog) {
     setEditingId(s.id);
-    setEditForm({ dose: String(s.dose), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay });
+    setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay });
     setExpandedId(null);
   }
 
   async function saveEdit() {
-    if (!editingId || !editForm.dose) return;
+    if (!editingId || !editForm.dose || !editForm.name.trim()) return;
     setEditSaving(true);
     await fetch("/api/supplements", {
       method: "POST",
@@ -349,6 +381,7 @@ export default function SupplementLog({ date }: Props) {
       body: JSON.stringify({
         action: "update",
         id: editingId,
+        name: editForm.name.trim(),
         dose: Number(editForm.dose),
         unit: editForm.unit,
         pills: Number(editForm.pills) || 1,
@@ -1086,10 +1119,11 @@ export default function SupplementLog({ date }: Props) {
                 {/* Name + dose */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{
-                    color: s.taken ? "var(--text-dim)" : "var(--text)",
+                    color: s.taken ? "var(--text-dim)" : (s.name ? "var(--text)" : "#f87171"),
                     textDecoration: s.taken ? "line-through" : "none",
                     fontFamily: "var(--font-display)",
-                  }}>{s.name}</p>
+                    fontStyle: s.name ? "normal" : "italic",
+                  }}>{s.name || "⚠ Name missing — tap ✏ to fix"}</p>
                   <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
                     {s.brand ? <span className="uppercase tracking-wide mr-1.5" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
                     {s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}
@@ -1116,6 +1150,26 @@ export default function SupplementLog({ date }: Props) {
                     </svg>
                   </button>
                 )}
+
+                {/* Retake */}
+                {s.name && s.dose ? (
+                  <button
+                    onClick={() => {
+                      if (retakeId === s.id) { setRetakeId(null); } else {
+                        setRetakeId(s.id);
+                        setRetakeTime("morning");
+                        setEditingId(null);
+                      }
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                    style={{ color: retakeId === s.id ? "#34d399" : "var(--text-dim)" }}
+                    title="Add another dose"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                ) : null}
 
                 {/* Edit */}
                 <button
@@ -1154,6 +1208,17 @@ export default function SupplementLog({ date }: Props) {
               {editingId === s.id && (
                 <div className="px-5 pb-4 pt-2 space-y-3"
                   style={{ background: "var(--bg-raised)", borderTop: "1px solid var(--border-dim)" }}>
+                  <div className="space-y-1">
+                    <p className="text-[9px] uppercase tracking-wide"
+                      style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Name</p>
+                    <input
+                      value={editForm.name}
+                      onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                      placeholder="Supplement name"
+                      className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}
+                    />
+                  </div>
                   <div className="grid grid-cols-4 gap-2">
                     <div className="space-y-1">
                       <p className="text-[9px] uppercase tracking-wide"
@@ -1211,10 +1276,50 @@ export default function SupplementLog({ date }: Props) {
                     </button>
                     <button
                       onClick={saveEdit}
-                      disabled={editSaving || !editForm.dose}
+                      disabled={editSaving || !editForm.dose || !editForm.name.trim()}
                       className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
                       style={{ background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)" }}>
                       {editSaving ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline retake panel */}
+              {retakeId === s.id && (
+                <div className="px-5 pb-4 pt-3 space-y-3"
+                  style={{ background: "rgba(52,211,153,0.05)", borderTop: "1px solid rgba(52,211,153,0.15)" }}>
+                  <div className="flex items-center gap-2">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="#34d399" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <p className="text-xs font-semibold" style={{ color: "#34d399", fontFamily: "var(--font-display)" }}>
+                      Add another dose of {s.name}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] uppercase tracking-wide shrink-0" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
+                    <select
+                      value={retakeTime}
+                      onChange={(e) => setRetakeTime(e.target.value as TimeOfDay)}
+                      className="flex-1 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}>
+                      {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setRetakeId(null)}
+                      className="flex-1 py-1.5 rounded-lg text-xs transition-colors"
+                      style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => doRetake(s)}
+                      disabled={saving}
+                      className="flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                      style={{ background: "rgba(52,211,153,0.15)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
+                      {saving ? "Adding…" : "Add dose"}
                     </button>
                   </div>
                 </div>
