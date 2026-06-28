@@ -12,7 +12,7 @@ const SUPP_SCHEMA = `{
   "brand": "string|null — brand name if known from label or context, otherwise null",
   "dose": "number — typical recommended dose",
   "unit": "mg|mcg|IU|g",
-  "timeOfDay": "morning|afternoon|evening|any",
+  "timeOfDay": "morning|afternoon|evening|any — NEVER use 'daily'; use 'any' for supplements taken any time of day",
   "description": "string — 1–2 sentences: what it is and its primary benefits",
   "usageTip": "string — 1–2 sentences: best practices (timing, food/water, interactions to avoid)",
   "reason": "string — 1 sentence: why this matches the request"
