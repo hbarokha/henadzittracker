@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   GarminDaily, GarminSleep, GarminHeartRate, GarminActivity, GarminBodyComp, GarminUserMetrics,
   GarminHRV, GarminStress, GarminBodyBattery, GarminRespiration, GarminSpO2,
-  GarminEpochs, GarminTrainingStatus,
+  GarminEpochs, GarminTrainingStatus, GarminBloodPressure,
 } from "@/lib/garmin";
 
 interface Props {
@@ -12,6 +12,7 @@ interface Props {
   foodCalories: number;
   onSyncStart?: () => void;
   onSyncEnd?: () => void;
+  onDataLoaded?: (date: string) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -548,6 +549,66 @@ function RespirationSpO2Card({ respiration, spo2 }: { respiration: GarminRespira
   );
 }
 
+function BloodPressureCard({ data }: { data: GarminBloodPressure }) {
+  if (!data.readings || data.readings.length === 0) return null;
+  const latest = data.readings[data.readings.length - 1];
+
+  // ACC/AHA categories
+  const category = (s: number, dia: number) => {
+    if (s >= 140 || dia >= 90) return { label: "Stage 2 High", color: "text-red-400" };
+    if (s >= 130 || dia >= 80) return { label: "Stage 1 High", color: "text-orange-400" };
+    if (s >= 120)              return { label: "Elevated",     color: "text-amber-400" };
+    return                            { label: "Normal",       color: "text-emerald-400" };
+  };
+  const cat = category(latest.systolic, latest.diastolic);
+  const time = (() => {
+    try {
+      const t = new Date(latest.timestamp);
+      return isNaN(t.getTime()) ? null : t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch { return null; }
+  })();
+
+  return (
+    <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🩺</span>
+          <span className="text-sm font-semibold text-white">Blood Pressure</span>
+        </div>
+        <span className="text-xs text-gray-400">
+          {data.readings.length} reading{data.readings.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div>
+          <p className={`text-3xl font-bold tabular-nums ${cat.color}`}>
+            {latest.systolic}<span className="text-gray-500 mx-0.5">/</span>{latest.diastolic}
+          </p>
+          <p className="text-[10px] text-gray-400 mt-0.5">
+            mmHg{time ? ` · ${time}` : ""}
+          </p>
+        </div>
+        <div className="space-y-1">
+          <p className={`text-xs font-semibold ${cat.color}`}>{cat.label}</p>
+          {latest.pulse != null && (
+            <p className="text-xs text-gray-400">♥ {latest.pulse} bpm</p>
+          )}
+        </div>
+      </div>
+
+      {data.readings.length > 1 && data.avgSystolic != null && data.avgDiastolic != null && (
+        <div className="flex justify-between text-xs text-gray-400">
+          <span>Day average: <span className="text-white font-semibold tabular-nums">{data.avgSystolic}/{data.avgDiastolic}</span></span>
+          <span>
+            Range {Math.min(...data.readings.map((r) => r.systolic))}–{Math.max(...data.readings.map((r) => r.systolic))} sys
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrainingStatusCard({ data }: { data: GarminTrainingStatus }) {
   const hasAny = data.readinessScore != null || data.acuteLoad != null || data.loadBalance != null;
   if (!hasAny) return null;
@@ -785,7 +846,7 @@ function WorkoutCard({ activity }: { activity: GarminActivity }) {
 
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
-export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyncEnd }: Props) {
+export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyncEnd, onDataLoaded }: Props) {
   const [daily, setDaily] = useState<GarminDaily | null>(null);
   const [sleep, setSleep] = useState<GarminSleep | null>(null);
   const [heartRate, setHeartRate] = useState<GarminHeartRate | null>(null);
@@ -799,8 +860,13 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
   const [spo2, setSpo2] = useState<GarminSpO2 | null>(null);
   const [epochs, setEpochs] = useState<GarminEpochs | null>(null);
   const [trainingStatus, setTrainingStatus] = useState<GarminTrainingStatus | null>(null);
+  const [bloodPressure, setBloodPressure] = useState<GarminBloodPressure | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+
+  // Ref keeps loadAll's memoization independent of the (usually inline) callback
+  const onDataLoadedRef = useRef(onDataLoaded);
+  useEffect(() => { onDataLoadedRef.current = onDataLoaded; });
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -818,6 +884,7 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
       fetch(`/api/garmin/spo2?date=${date}`).then((r) => r.json()),
       fetch(`/api/garmin/epochs?date=${date}`).then((r) => r.json()),
       fetch(`/api/garmin/trainingstatus?date=${date}`).then((r) => r.json()),
+      fetch(`/api/garmin/bloodpressure?date=${date}`).then((r) => r.json()),
     ]);
     const v = (r: PromiseSettledResult<unknown>) => r.status === "fulfilled" ? r.value : null;
     setDaily(v(results[0]) as GarminDaily | null);
@@ -833,7 +900,9 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
     setSpo2(v(results[10]) as GarminSpO2 | null);
     setEpochs(v(results[11]) as GarminEpochs | null);
     setTrainingStatus(v(results[12]) as GarminTrainingStatus | null);
+    setBloodPressure(v(results[13]) as GarminBloodPressure | null);
     setLoading(false);
+    onDataLoadedRef.current?.(date);
   }, [date]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -882,7 +951,8 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
     } : null
   );
 
-  const hasData = sleep || heartRate || activities.length > 0 || bodyComp || effectiveHrv || stress || effectiveBodyBattery;
+  const hasData = sleep || heartRate || activities.length > 0 || bodyComp || effectiveHrv || stress || effectiveBodyBattery
+    || (bloodPressure?.readings?.length ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -1001,6 +1071,13 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
           {(respiration || spo2) && (
             <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4">
               <RespirationSpO2Card respiration={respiration} spo2={spo2} />
+            </div>
+          )}
+
+          {/* Blood pressure */}
+          {bloodPressure && bloodPressure.readings.length > 0 && (
+            <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4">
+              <BloodPressureCard data={bloodPressure} />
             </div>
           )}
 

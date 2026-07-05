@@ -22,6 +22,8 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 - Daily supplement checklist grouped by time of day (Morning / Afternoon / Evening)
 - Add supplements by manual entry, text description (AI), or **photo of bottle/label with live camera support**
 - Per-supplement 7-day and 30-day adherence tracking fed into AI analysis
+- **Dosage- and overlap-aware AI**: all supplement Gemini actions (identify-text, identify-image, recommend, generate-tips) receive the full stack with TOTAL daily doses (dose × pills) and shared dosage/overlap rules — doses judged against effective ranges and upper limits for the user's age/sex/weight, same-nutrient overlaps summed across combo products, mineral absorption competition and fat-soluble vitamin pairing considered in timing advice
+- Recommend + tips actions read the full Garmin context (daily, sleep, HRV, stress, training status, body comp, blood pressure — with fallback to yesterday's cache) plus 7-day nutrition averages and per-supplement adherence
 
 ### Garmin Connect Integration
 All data is imported via the **unofficial Garmin Connect API** (session-based auth via the `garmin-connect` npm package —
@@ -67,6 +69,7 @@ the official developer program is currently suspended as of 2024).
 
 **Health Metrics**
 - SpO2 / Pulse Ox: spot readings and nightly averages
+- Blood pressure: systolic/diastolic/pulse readings (Garmin Index BPM or manual Garmin Connect entries), latest reading + day average, ACC/AHA category badge
 - VO2 Max: estimated from running activities + cycling activities (separate values)
 - Fitness age
 - Training status: Peaking / Maintaining / Productive / Recovering / Unproductive / Detraining / Overreaching
@@ -96,9 +99,10 @@ the official developer program is currently suspended as of 2024).
 - Auto-generates on page load via Gemini — no button press required
 - Covers today, last 7 days, and last 30 days with per-period health scores (1–10)
 - Highlights, concerns, and 3–6 prioritized recommendations per analysis
-- Persisted to `data/summary-cache/YYYY-MM-DD.json`; auto-regenerates if cache is older than 12 hours
+- Persisted to `data/summary-cache/YYYY-MM-DD-{bracket}.json` (per time-of-day bracket); cached summary for **today** expires after 1 hour (today's metrics change constantly), past dates after 12 hours
+- On page load the summary panel **waits for the Garmin dashboard to finish loading** (`ready` prop wired from `page.tsx` via GarminDashboard's `onDataLoaded`) so Gemini always reads the freshly synced cache, never the previous day's data
 - Manual ↺ Refresh button available to force a fresh generation at any time
-- Dedicated **Supplement Analysis** section: stack assessment, adherence insights, gaps (data-grounded), timing tips, interactions
+- Dedicated **Supplement Analysis** section: stack assessment (incl. per-supplement total-daily-dose adequacy vs safe upper limits), adherence insights, gaps (data-grounded, ingredient-level dedup vs combo products), timing tips (absorption competition + fat-soluble pairing), interactions incl. cross-product nutrient overlaps with cumulative totals
 - All available data is fed to Gemini: profile (age/sex/weight/BMR/TDEE), VO2 max, body composition, sleep stages + HRV status + 5-day avg HRV, training readiness score, acute/chronic training load, SpO2, respiration rate, intensity minutes vs WHO targets, full workout details (HR, distance, training effect, training load, PRs), body battery charged/drained, stress rest%, supplement adherence rates, weight trend, 7-day nutrition averages
 
 ### General
@@ -175,6 +179,7 @@ src/
         bodybattery/route.ts        GET — current/high/low/charged/drained
         respiration/route.ts        GET — avg waking, respiration chart
         spo2/route.ts               GET — average, lowest, latest SpO2
+        bloodpressure/route.ts      GET — BP readings (systolic/diastolic/pulse) + day average
         epochs/route.ts             GET — 15-minute epoch blocks (steps + calories)
         trainingstatus/route.ts     GET — readiness score, acute/chronic load, HR zones
       ai/
@@ -232,13 +237,14 @@ data/
     YYYY-MM-DD-heartrate.json       Cached HR data per date
     YYYY-MM-DD-bodybattery.json     Cached Body Battery per date
     YYYY-MM-DD-spo2.json            Cached SpO2 data per date
+    YYYY-MM-DD-bloodpressure.json   Cached blood pressure readings per date
     YYYY-MM-DD-respiration.json     Cached respiration data per date
     YYYY-MM-DD-epochs.json          Cached 15-min epoch data per date
     YYYY-MM-DD-trainingstatus.json  Cached training readiness + acute/chronic load + HR zones per date
     YYYY-MM-DD-bodycomp.json        Cached Garmin scale body composition per date
     YYYY-MM-DD-usermetrics.json     Cached VO2 max (running + cycling) per date
   summary-cache/
-    YYYY-MM-DD.json                 Persisted AI health summary — auto-regenerates if older than 12h
+    YYYY-MM-DD-{bracket}.json       Persisted AI health summary per time-of-day bracket — today expires after 1h, past dates after 12h
   weight.json                       Body weight log (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
@@ -457,6 +463,7 @@ Activity multipliers:
 | Body Battery | `GET /proxy/wellness-service/wellness/dailyBodyBattery/{displayName}?startDate=...&endDate=...` |
 | Respiration | `GET /proxy/wellness-service/wellness/dailyRespiration/{displayName}?date=YYYY-MM-DD` |
 | SpO2 | `GET /proxy/wellness-service/wellness/dailyPulseOx/{displayName}?date=YYYY-MM-DD` |
+| Blood pressure | `GET /proxy/bloodpressure-service/bloodpressure/range/{startDate}/{endDate}?includeAll=true` |
 | Activities | `GET /proxy/activitylist-service/activities/search/activities?startDate=...&endDate=...` |
 | Activity detail | `GET /proxy/activity-service/activity/{activityId}` |
 | Body composition | `GET /proxy/weight-service/weight/dateRange?startDate=...&endDate=...` |
@@ -510,3 +517,8 @@ Activity multipliers:
 - [x] **UI polish pass** — section headers across all tabs now have a small amber accent bar on the left; FoodLog empty state uses a warm amber-bordered circle behind the emoji; supplement tip text clamped to 2 lines with full text in expandable info panel
 - [x] **Biological age analysis** — Gemini estimates biological age from VO2 max, HRV, resting HR, sleep score, body fat%, stress, and activity; returns `estimate`, `delta` (vs chronological age), `confidence`, `keyFactors[]`, and `topImprovement`; displayed as a collapsible card in HealthSummaryPanel between overall score and Today section; Garmin `fitnessAge` and `trainingStatus` now also included in the summary prompt
 - [x] **Global health goal in all Gemini calls** — `profile.goal` now injected into AI health summary, supplement recommend, supplement generate-tips, AND supplement identify-text; all recommendations, highlights, and supplement suggestions are aligned toward the user's stated goal
+- [x] **Garmin blood pressure** — `fetchBloodPressure()` via `bloodpressure-service/bloodpressure/range` (Index BPM / manual readings); `/api/garmin/bloodpressure` route; dashboard card with latest reading, ACC/AHA category, day average; fed into AI summary prompt (today + week/month averages) and biological-age biomarkers
+- [x] **Garmin status race fix** — `garminStatus` is now `null` while `/api/garmin/status` is in flight; a "Checking Garmin connection…" placeholder renders instead of flashing the Connect card before the session check resolves
+- [x] **AI summary waits for fresh Garmin data** — `HealthSummaryPanel` takes a `ready` prop; page wires it to GarminDashboard's `onDataLoaded(date)` callback so the summary generates only after the selected date's Garmin data is freshly cached; readiness is keyed by `garminLoadedDate === selectedDate` (not a boolean) so date changes invalidate it in the same render and stale in-flight loads can't mark the wrong date ready; a 25s fallback timer generates from cache if the Garmin load ever hangs; today's summary-cache TTL reduced 12h → 1h (past dates keep 12h), with "today" taken from the client-supplied local date to avoid server-timezone mismatches
+- [x] **Garmin today-cache freshness window** — `shouldFetch()` reuses today's cache when `syncedAt` is < 60s old, so the dashboard's 14 GET routes, the sync POST, and the AI-summary refresh no longer fire duplicate request bursts at Garmin (Cloudflare rate-limit protection)
+- [x] **Supplement AI dosage & overlap awareness** — shared `stackLine()` (total daily dose = dose × pills) and `DOSAGE_OVERLAP_RULES` injected into all four supplement AI actions; recommend/tips also get stress, training status, body comp, blood pressure, weight trend, 7-day adherence, and 7-day fat/protein averages; garmin cache reads fall back to yesterday when today isn't synced yet; AI summary supplement rules upgraded to require dose-adequacy checks and cross-product cumulative totals

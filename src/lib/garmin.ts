@@ -334,9 +334,17 @@ function isoToday(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Today's cache is reused for a short window so back-to-back loads (the dashboard's
+// GET routes, the sync POST, the AI-summary refresh) don't hammer Garmin with
+// duplicate bursts — Cloudflare on sso.garmin.com rate-limits aggressive patterns.
+const TODAY_CACHE_FRESH_MS = 60 * 1000;
+
 async function shouldFetch(date: string, key: string): Promise<boolean> {
-  if (date === isoToday()) return true;
-  return (await readCache(date, key)) === null;
+  const cached = await readCache<{ syncedAt?: string }>(date, key);
+  if (cached === null) return true;
+  if (date !== isoToday()) return false;
+  const syncedMs = cached.syncedAt ? new Date(cached.syncedAt).getTime() : 0;
+  return Date.now() - syncedMs > TODAY_CACHE_FRESH_MS;
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -852,6 +860,59 @@ export async function fetchSpO2(date: string): Promise<GarminSpO2 | null> {
     return result;
   } catch {
     return readCache<GarminSpO2>(date, "spo2");
+  }
+}
+
+// ── Blood Pressure ────────────────────────────────────────────────────────────
+
+export interface GarminBPReading {
+  timestamp: string;          // local measurement time
+  systolic: number;           // mmHg
+  diastolic: number;          // mmHg
+  pulse: number | null;       // bpm
+}
+
+export interface GarminBloodPressure {
+  date: string;
+  readings: GarminBPReading[];
+  avgSystolic: number | null;
+  avgDiastolic: number | null;
+  syncedAt: string;
+}
+
+export async function fetchBloodPressure(date: string): Promise<GarminBloodPressure | null> {
+  if (!(await shouldFetch(date, "bloodpressure"))) return readCache<GarminBloodPressure>(date, "bloodpressure");
+  const gc = await getClient();
+  if (!gc) return readCache<GarminBloodPressure>(date, "bloodpressure");
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: any = await gc.get(`${GC_API}/bloodpressure-service/bloodpressure/range/${date}/${date}`, {
+      params: { includeAll: true },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const summaries: any[] = Array.isArray(raw?.measurementSummaries) ? raw.measurementSummaries : [];
+    const readings: GarminBPReading[] = summaries
+      .flatMap((s) => (Array.isArray(s?.measurements) ? s.measurements : []))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((m: any) => ({
+        timestamp: m.measurementTimestampLocal ?? m.measurementTimestampGMT ?? "",
+        systolic: m.systolic ?? 0,
+        diastolic: m.diastolic ?? 0,
+        pulse: m.pulse ?? null,
+      }))
+      .filter((r) => r.systolic > 0 && r.diastolic > 0)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    const result: GarminBloodPressure = {
+      date,
+      readings,
+      avgSystolic: readings.length ? Math.round(readings.reduce((s, r) => s + r.systolic, 0) / readings.length) : null,
+      avgDiastolic: readings.length ? Math.round(readings.reduce((s, r) => s + r.diastolic, 0) / readings.length) : null,
+      syncedAt: new Date().toISOString(),
+    };
+    await writeCache(date, "bloodpressure", result);
+    return result;
+  } catch {
+    return readCache<GarminBloodPressure>(date, "bloodpressure");
   }
 }
 

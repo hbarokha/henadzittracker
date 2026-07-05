@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   fetchDaily, fetchSleep, fetchHeartRate, fetchActivities, fetchBodyComp,
   fetchHRV, fetchStressData, fetchBodyBattery, fetchRespiration,
-  fetchSpO2, fetchEpochs, fetchTrainingStatus,
+  fetchSpO2, fetchEpochs, fetchTrainingStatus, fetchBloodPressure,
   isConnected,
 } from "@/lib/garmin";
 
@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const { date } = await req.json();
   if (!date) return NextResponse.json({ ok: false, error: "date required" }, { status: 400 });
 
-  const [daily, sleep, heartrate, activities, bodycomp, hrv, stress, bodybattery, respiration, spo2, epochs, trainingstatus] =
+  const [daily, sleep, heartrate, activities, bodycomp, hrv, stress, bodybattery, respiration, spo2, epochs, trainingstatus, bloodpressure] =
     await Promise.allSettled([
       fetchDaily(date),
       fetchSleep(date),
@@ -25,6 +25,7 @@ export async function POST(req: Request) {
       fetchSpO2(date),
       fetchEpochs(date),
       fetchTrainingStatus(date),
+      fetchBloodPressure(date),
     ]);
 
   return NextResponse.json({
@@ -41,5 +42,6 @@ export async function POST(req: Request) {
     spo2: spo2.status === "fulfilled" ? spo2.value : null,
     epochs: epochs.status === "fulfilled" ? epochs.value : null,
     trainingstatus: trainingstatus.status === "fulfilled" ? trainingstatus.value : null,
+    bloodpressure: bloodpressure.status === "fulfilled" ? bloodpressure.value : null,
   });
 }

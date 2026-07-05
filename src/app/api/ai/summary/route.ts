@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { getAllEntries, type DbEntry } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
@@ -70,13 +71,15 @@ interface DaySnapshot {
   spo2: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   trainingstatus: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  bloodpressure: any;
 }
 
 async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<DaySnapshot[]> {
   const food = aggregateFood(allEntries, dates);
   return Promise.all(
     dates.map(async (d) => {
-      const [daily, sleep, hrv, activities, stress, bodybattery, spo2, trainingstatus] = await Promise.all([
+      const [daily, sleep, hrv, activities, stress, bodybattery, spo2, trainingstatus, bloodpressure] = await Promise.all([
         readGarminCache(d, "daily"),
         readGarminCache(d, "sleep"),
         readGarminCache(d, "hrv"),
@@ -85,6 +88,7 @@ async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<D
         readGarminCache(d, "bodybattery"),
         readGarminCache(d, "spo2"),
         readGarminCache(d, "trainingstatus"),
+        readGarminCache(d, "bloodpressure"),
       ]);
       return {
         date: d,
@@ -97,6 +101,7 @@ async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<D
         bodybattery,
         spo2,
         trainingstatus,
+        bloodpressure,
       };
     })
   );
@@ -129,6 +134,8 @@ function summarizePeriod(snaps: DaySnapshot[]) {
     avgStress:           avg(snaps.map((s) => s.stress?.avgStress ?? s.daily?.avgStressLevel)),
     avgRestingHR:        avg(snaps.map((s) => s.daily?.restingHeartRate)),
     avgSpo2:             avg(snaps.map((s) => s.spo2?.average ?? s.daily?.avgSpo2)),
+    avgSystolic:         avg(snaps.map((s) => s.bloodpressure?.avgSystolic)),
+    avgDiastolic:        avg(snaps.map((s) => s.bloodpressure?.avgDiastolic)),
     avgBatteryHigh:      avg(snaps.map((s) => s.bodybattery?.highest)),
     avgBatteryLow:       avg(snaps.map((s) => s.bodybattery?.lowest)),
     avgBatteryCharged:   avg(snaps.map((s) => s.bodybattery?.charged ?? s.daily?.bodyBatteryCharged)),
@@ -141,11 +148,123 @@ function summarizePeriod(snaps: DaySnapshot[]) {
   };
 }
 
+// ── Gemini structured output ──────────────────────────────────────────────────
+
+const sectionSchema = (extra: Record<string, unknown>) => ({
+  type: "OBJECT",
+  properties: {
+    score: { type: "INTEGER" },
+    headline: { type: "STRING" },
+    summary: { type: "STRING" },
+    ...extra,
+  },
+  required: ["score", "headline", "summary"],
+});
+
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    biologicalAge: {
+      type: "OBJECT",
+      properties: {
+        estimate: { type: "INTEGER" },
+        delta: { type: "INTEGER" },
+        confidence: { type: "STRING", enum: ["high", "medium", "low"] },
+        keyFactors: { type: "ARRAY", items: { type: "STRING" } },
+        topImprovement: { type: "STRING" },
+      },
+      required: ["estimate", "delta", "confidence", "keyFactors", "topImprovement"],
+    },
+    today: sectionSchema({
+      highlights: { type: "ARRAY", items: { type: "STRING" } },
+      concerns: { type: "ARRAY", items: { type: "STRING" } },
+    }),
+    week: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
+    month: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
+    supplements: {
+      type: "OBJECT",
+      properties: {
+        stackAssessment: { type: "STRING" },
+        adherenceInsight: { type: "STRING" },
+        gaps: { type: "ARRAY", items: { type: "STRING" } },
+        timing: { type: "ARRAY", items: { type: "STRING" } },
+        interactions: { type: "ARRAY", items: { type: "STRING" } },
+      },
+      required: ["stackAssessment", "adherenceInsight", "gaps", "timing", "interactions"],
+    },
+    recommendations: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          priority: { type: "STRING", enum: ["high", "medium", "low"] },
+          category: { type: "STRING", enum: ["nutrition", "sleep", "exercise", "recovery", "supplements", "stress", "hydration"] },
+          text: { type: "STRING" },
+        },
+        required: ["priority", "category", "text"],
+      },
+    },
+  },
+  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
+};
+
+// Primary model, one retry on transient errors, then a lighter fallback model
+const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < GEMINI_MODELS.length; attempt++) {
+    if (attempt > 0) await wait(1500 * attempt);
+    let resp: Response;
+    try {
+      resp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODELS[attempt]}:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              responseSchema: RESPONSE_SCHEMA,
+              // Low temperature keeps scores and bio-age stable between runs on identical data
+              temperature: 0.2,
+            },
+          }),
+        }
+      );
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue; // network error — retry
+    }
+    if (!resp.ok) {
+      const body = await resp.text();
+      lastError = new Error(`Gemini ${resp.status}: ${body.slice(0, 300)}`);
+      if (RETRYABLE_STATUS.has(resp.status)) continue;
+      throw lastError; // 4xx client errors won't fix themselves
+    }
+    const json = await resp.json();
+    const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) { lastError = new Error("Empty Gemini response"); continue; }
+    try {
+      return JSON.parse(text);
+    } catch {
+      lastError = new Error("Gemini returned invalid JSON");
+      continue;
+    }
+  }
+  throw lastError ?? new Error("Gemini call failed");
+}
+
 // ── summary cache ─────────────────────────────────────────────────────────────
 
 interface CachedSummary {
   generatedAt: string;
   data: unknown;
+  dataHash?: string;
 }
 
 type TimeBracket = "morning" | "afternoon" | "evening" | "night";
@@ -161,14 +280,14 @@ async function readSummaryCache(date: string, bracket: TimeBracket): Promise<Cac
   return readJson<CachedSummary>(`summary-cache/${date}-${bracket}.json`);
 }
 
-async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown): Promise<void> {
-  await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data });
+async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown, dataHash: string): Promise<void> {
+  await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data, dataHash });
 }
 
 // ── route ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
-  const { date, force, time: clientTime } = await req.json();
+  const { date, force, time: clientTime, goals: clientGoals } = await req.json();
   if (!date) return NextResponse.json({ error: "date required" }, { status: 400 });
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -186,14 +305,14 @@ export async function POST(req: Request) {
     night:     "Night (11 pm–5 am) — rest period; focus on sleep quality and tomorrow prep",
   };
 
-  if (!force) {
-    const cached = await readSummaryCache(date, bracket);
-    if (cached) {
-      const age = Date.now() - new Date(cached.generatedAt).getTime();
-      if (age < 12 * 60 * 60 * 1000) {
-        return NextResponse.json(Object.assign({}, cached.data as object, { cached: true, cachedAt: cached.generatedAt }));
-      }
-    }
+  // Change-based invalidation: a cached summary stays valid until the data Gemini
+  // would see actually changes (hash comparison further down, after data loads).
+  // A very fresh cache (< 15 min) is served immediately without loading anything.
+  const cached = force ? null : await readSummaryCache(date, bracket);
+  const serveCached = (c: CachedSummary) =>
+    NextResponse.json(Object.assign({}, c.data as object, { cached: true, cachedAt: c.generatedAt }));
+  if (cached && Date.now() - new Date(cached.generatedAt).getTime() < 15 * 60 * 1000) {
+    return serveCached(cached);
   }
 
   const today      = date;
@@ -223,20 +342,38 @@ export async function POST(req: Request) {
   ]);
   const suppTaken = suppLog.filter((l) => l.taken).length;
 
-  // Fetch per-day snapshots + today's extra caches in parallel
-  const [[todaySnaps, weekSnaps, monSnaps], todayBodyComp, userMetrics] = await Promise.all([
-    Promise.all([
-      buildSnapshots([today], allEntries),
-      buildSnapshots(weekDates, allEntries),
-      buildSnapshots(monDates, allEntries),
-    ]),
+  // One snapshot pass over the 30-day window — today, this week, the prior week
+  // and the month halves are all slices of it (no duplicate cache reads)
+  const [monSnaps, todayBodyComp, userMetrics] = await Promise.all([
+    buildSnapshots(monDates, allEntries),
     readGarminCache<{ weightKg: number | null; bmi: number | null; bodyFatPct: number | null; muscleMassKg: number | null; bodyWaterPct: number | null }>(today, "bodycomp"),
     readGarminCache<{ vo2MaxRunning: number | null; vo2MaxCycling: number | null; fitnessAge: number | null; trainingStatus: string | null }>(today, "usermetrics"),
   ]);
 
-  const todaySnap = todaySnaps[0];
-  const weekSum   = summarizePeriod(weekSnaps);
-  const monSum    = summarizePeriod(monSnaps);
+  const todaySnap     = monSnaps[monSnaps.length - 1];
+  const weekSnaps     = monSnaps.slice(-7);
+  const prevWeekSnaps = monSnaps.slice(-14, -7);
+  const weekSum       = summarizePeriod(weekSnaps);
+  const monSum        = summarizePeriod(monSnaps);
+  const prevWeekSum   = summarizePeriod(prevWeekSnaps);
+  const monFirstSum   = summarizePeriod(monSnaps.slice(0, 15));
+  const monSecondSum  = summarizePeriod(monSnaps.slice(15));
+
+  // Regenerate only when the data Gemini would see has actually changed since the
+  // cached summary was generated (syncedAt timestamps excluded — they change on
+  // every sync even when the values don't)
+  const dataHash = createHash("sha256").update(JSON.stringify(
+    { profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights },
+    (k, v) => (k === "syncedAt" ? undefined : v)
+  )).digest("hex");
+  if (cached && cached.dataHash === dataHash) {
+    return serveCached(cached);
+  }
+
+  // Previous analysis (any date/bracket) — anchors scores/bio-age and lets Gemini
+  // follow up on its own earlier recommendations like a coach with memory
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const latest = await readJson<{ generatedAt: string; date: string; data: any }>("summary-cache/latest.json");
 
   // Today's meals breakdown
   const todayMeals = allEntries
@@ -276,6 +413,16 @@ export async function POST(req: Request) {
   });
 
   const na = (v: unknown, unit = "") => (v != null && v !== 0 ? `${v}${unit}` : "no data");
+  const bpAvg = (s: { avgSystolic: number | null; avgDiastolic: number | null }) =>
+    s.avgSystolic != null && s.avgDiastolic != null ? `${s.avgSystolic}/${s.avgDiastolic} mmHg` : "no data";
+
+  const bpReadings: Array<{ timestamp: string; systolic: number; diastolic: number; pulse: number | null }> =
+    d.bloodpressure?.readings ?? [];
+  const bpLatest = bpReadings.length ? bpReadings[bpReadings.length - 1] : null;
+  const bpLine = bpLatest
+    ? `${bpLatest.systolic}/${bpLatest.diastolic} mmHg${bpLatest.pulse != null ? ` (pulse ${bpLatest.pulse} bpm)` : ""}` +
+      (bpReadings.length > 1 ? ` | day avg: ${d.bloodpressure.avgSystolic}/${d.bloodpressure.avgDiastolic} mmHg over ${bpReadings.length} readings` : "")
+    : "no data";
 
   // ── Build prompt ──────────────────────────────────────────────────────────
 
@@ -323,6 +470,7 @@ Moderate intensity: ${na(d.daily?.moderateIntensityMinutes, " min")} | Vigorous 
 Resting HR: ${na(d.daily?.restingHeartRate, " bpm")} | Max HR today: ${na(d.daily?.maxHeartRate, " bpm")}
 SpO2 avg: ${na(d.spo2?.average ?? d.daily?.avgSpo2, "%")} | SpO2 lowest: ${na(d.spo2?.lowest ?? d.daily?.lowestSpo2, "%")}
 Respiration rate: ${na(d.daily?.avgRespirationRate, " br/min")}
+Blood pressure (latest): ${bpLine}
 
 ### Sleep (last night)
 ${d.sleep
@@ -352,7 +500,7 @@ ${supplements.map((s) => {
     const m = monAdherence[s.id] ?? 0;
     const extra = [s.description, s.usageTip].filter(Boolean).join("; ");
     const label = [s.brand, s.name].filter(Boolean).join(" ");
-    const pillsStr = s.pills && s.pills > 1 ? ` × ${s.pills} pills` : "";
+    const pillsStr = s.pills && s.pills > 1 ? ` × ${s.pills} pills = ${s.dose * s.pills}${s.unit} total/day` : "/day";
     return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${extra ? ` | notes: ${extra}` : ""}`;
   }).join("\n")}`
   : "No supplements configured"}
@@ -369,6 +517,7 @@ Sleep:
 
 Recovery:
   Avg HRV: ${na(weekSum.avgHRV, " ms")} | Avg resting HR: ${na(weekSum.avgRestingHR, " bpm")} | Avg SpO2: ${na(weekSum.avgSpo2, "%")}
+  Avg blood pressure: ${bpAvg(weekSum)}
   Avg Body Battery: ${na(weekSum.avgBatteryLow)}–${na(weekSum.avgBatteryHigh)}/100 | Avg charged: +${na(weekSum.avgBatteryCharged)} | Avg drained: -${na(weekSum.avgBatteryDrained)}
   Avg stress: ${na(weekSum.avgStress, "/100")}
 
@@ -390,6 +539,7 @@ Sleep:
 
 Recovery:
   Avg HRV: ${na(monSum.avgHRV, " ms")} | Avg resting HR: ${na(monSum.avgRestingHR, " bpm")} | Avg SpO2: ${na(monSum.avgSpo2, "%")}
+  Avg blood pressure: ${bpAvg(monSum)}
   Avg Body Battery: ${na(monSum.avgBatteryLow)}–${na(monSum.avgBatteryHigh)}/100
   Avg stress: ${na(monSum.avgStress, "/100")}
 
@@ -448,12 +598,12 @@ Return a JSON object with EXACTLY this structure (no markdown, no extra text):
 Scoring rules:
 - 10 = all metrics optimal; weight sleep quality, HRV, nutrition adherence, recovery, and training load balance
 - User's stated health goal: "${profile?.goal ?? "not specified"}" — align ALL recommendations, highlights, supplement advice, AND the biologicalAge.topImprovement toward this goal
-- biologicalAge: use VO2 max, resting HR, HRV, sleep score/duration, body fat%, stress, and activity levels as primary biomarkers. Reference Garmin Fitness Age if available but give your own independent estimate. If data is sparse set confidence: "low"
+- biologicalAge: use VO2 max, resting HR, HRV, blood pressure, sleep score/duration, body fat%, stress, and activity levels as primary biomarkers. Reference Garmin Fitness Age if available but give your own independent estimate. If data is sparse set confidence: "low"
 - highlights: 1–3 items, each citing a metric. concerns: 0–3 items, each citing a metric
-- supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number
-- supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest something already in the stack
-- supplements.timing: 1–3 items, only for supplements already in their stack
-- supplements.interactions: only evidence-based interactions, empty array if none
+- supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number, AND evaluate each supplement's TOTAL daily dose (dose × pills) against the effective range and tolerable upper limit for this user — explicitly flag anything under- or over-dosed
+- supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest a nutrient already covered anywhere in the stack, including inside combo products (multivitamins, ZMA, electrolyte mixes)
+- supplements.timing: 1–3 items, only for supplements already in their stack; account for mineral absorption competition (calcium/iron/zinc/magnesium) and pair fat-soluble vitamins (D, K2, E, A, omega-3) with the user's fattiest meal
+- supplements.interactions: evidence-based interactions AND cross-product overlaps — if the same nutrient appears in multiple products, state the cumulative daily total and whether it approaches a safety limit; empty array if none
 - recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
 - Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
 - If Garmin data is missing for a period, say so and base the score on what is available

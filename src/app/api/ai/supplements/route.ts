@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
-import { getAllSupplements } from "@/lib/supplements";
+import { getAllSupplements, getAdherenceForRange, type Supplement } from "@/lib/supplements";
 import { getAllEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
@@ -17,6 +17,35 @@ const SUPP_SCHEMA = `{
   "usageTip": "string — 1–2 sentences: best practices (timing, food/water, interactions to avoid)",
   "reason": "string — 1 sentence: why this matches the request"
 }`;
+
+// Local (not UTC) date, optionally shifted — garmin caches are keyed by the client's local date
+function isoLocalDate(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Today's cache with fallback to yesterday, so morning requests (before the first
+// sync of the day) still get real data instead of "no data"
+async function readGarminCache(key: string): Promise<Record<string, unknown> | null> {
+  return (await readJson<Record<string, unknown>>(`garmin-cache/${isoLocalDate()}-${key}.json`))
+      ?? (await readJson<Record<string, unknown>>(`garmin-cache/${isoLocalDate(-1)}-${key}.json`));
+}
+
+// One line per supplement with the TOTAL daily dose spelled out (dose × pills),
+// so Gemini can reason about dosage adequacy and cross-product overlaps
+function stackLine(s: Supplement): string {
+  const pills = s.pills && s.pills > 1 ? s.pills : 1;
+  const label = [s.brand, s.name].filter(Boolean).join(" ");
+  const doseStr = pills > 1
+    ? `${s.dose}${s.unit} × ${pills} pills = ${s.dose * pills}${s.unit} total/day`
+    : `${s.dose}${s.unit}/day`;
+  return `- ${label}: ${doseStr} | timing: ${s.timeOfDay}${s.description ? ` | ${s.description}` : ""}`;
+}
+
+const DOSAGE_OVERLAP_RULES = `- DOSAGE: evaluate every dose as the TOTAL daily amount (dose × pills). Judge it against the effective range and the tolerable upper intake level for THIS user's age, sex, and weight — explicitly flag anything under-dosed or over-dosed
+- OVERLAPS: treat combo products (multivitamins, ZMA, electrolyte mixes, greens powders) as containing their typical ingredients; sum the SAME nutrient across ALL products before judging dose or suggesting more of it, and call out any cumulative total that approaches a safety limit
+- ABSORPTION: account for competing minerals (e.g. calcium vs iron vs zinc, magnesium vs calcium) and synergies (vitamin D + K2, iron + vitamin C, fat-soluble vitamins with dietary fat) when advising timing`;
 
 async function callGemini(parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }>) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -43,9 +72,15 @@ export async function POST(req: Request) {
     // ── identify from text prompt ────────────────────────────────────────────
     if (body.action === "identify-text") {
       const { prompt } = body as { prompt: string };
-      const profile = await loadProfile();
+      const [profile, allSupps] = await Promise.all([loadProfile(), getAllSupplements()]);
       const goalLine = profile?.goal ? `\nUser's health goal: ${profile.goal}` : "";
-      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}
+      const profileLine = profile
+        ? `\nUser: ${profile.age}y ${profile.sex}, ${profile.weightKg} kg, ${profile.heightCm} cm, activity: ${profile.activityLevel}`
+        : "";
+      const stackBlock = allSupps.length
+        ? `\n\nCurrent supplement stack (total daily doses):\n${allSupps.map(stackLine).join("\n")}`
+        : "";
+      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}${profileLine}${stackBlock}
 
 Return JSON:
 {
@@ -54,7 +89,9 @@ Return JSON:
 
 Rules:
 - Only recommend evidence-backed supplements${profile?.goal ? "\n- Align suggestions toward the user's stated health goal" : ""}
-- Dose must be a realistic, commonly available amount
+- Dose must be a realistic, commonly available amount, appropriate for this user's age, sex, and body weight
+${DOSAGE_OVERLAP_RULES}
+- If a suggested supplement (or the same nutrient inside a combo product) is already in the current stack, do not duplicate it — either skip it or explain the cumulative dose implication in "usageTip"
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
 - Return only valid JSON, no markdown`;
@@ -69,8 +106,12 @@ Rules:
     // ── identify from photo ──────────────────────────────────────────────────
     if (body.action === "identify-image") {
       const { base64, mimeType } = body as { base64: string; mimeType: string };
+      const allSupps = await getAllSupplements();
+      const stackBlock = allSupps.length
+        ? `\n\nUser's current supplement stack (total daily doses):\n${allSupps.map(stackLine).join("\n")}`
+        : "";
       const systemPrompt = `You are a supplement expert. Identify the supplement(s) shown in this photo (typically a bottle or packaging).
-Extract name, dose, unit, and suggest timing. If multiple supplements are visible, return all of them.
+Extract name, dose, unit, and suggest timing. If multiple supplements are visible, return all of them.${stackBlock}
 
 Return JSON:
 {
@@ -81,6 +122,7 @@ Rules:
 - Extract the exact name and dose shown on the label
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
+- If the identified supplement overlaps with a nutrient already in the current stack (including inside combo products), state the cumulative daily total and whether it is safe in "usageTip"
 - If the label is unclear, make a best guess
 - Return only valid JSON, no markdown`;
 
@@ -93,19 +135,26 @@ Rules:
 
     // ── personalized recommendations ─────────────────────────────────────────
     if (body.action === "recommend") {
-      const today = new Date().toISOString().slice(0, 10);
-
-      const [profile, allSupps, allEntries, weightRows, daily, sleep, hrv, userMetrics, bodyComp] = await Promise.all([
+      const [profile, allSupps, allEntries, weightRows, daily, sleep, hrv, userMetrics, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
         getAllEntries(),
-        getRecentWeightEntries(8),
-        readJson<Record<string, unknown>>(`garmin-cache/${today}-daily.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${today}-sleep.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${today}-hrv.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${today}-usermetrics.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${today}-bodycomp.json`),
+        getRecentWeightEntries(35),
+        readGarminCache("daily"),
+        readGarminCache("sleep"),
+        readGarminCache("hrv"),
+        readGarminCache("usermetrics"),
+        readGarminCache("bodycomp"),
+        readGarminCache("stress"),
+        readGarminCache("trainingstatus"),
+        readGarminCache("bloodpressure"),
       ]);
+
+      // 7-day adherence per supplement — inconsistent intake is itself a signal
+      const last7 = Array.from({ length: 7 }, (_, i) => isoLocalDate(-i));
+      const adherence = allSupps.length
+        ? await getAdherenceForRange(allSupps.map((s) => s.id), last7)
+        : ({} as Record<string, number>);
 
       const bmr  = profile ? calculateBMR(profile) : null;
       const tdee = profile ? calculateTDEE(profile) : null;
@@ -129,9 +178,15 @@ Rules:
       const avgFat     = avgN(days.map((d) => d.fat));
 
       const latestWeight = weightRows[weightRows.length - 1]?.weightKg ?? null;
-      const existing = allSupps.map((s) => `${[s.brand, s.name].filter(Boolean).join(" ")} ${s.dose}${s.unit}${s.pills && s.pills > 1 ? ` × ${s.pills}` : ""} (${s.timeOfDay})`);
+      const weightTrend = weightRows.length >= 2
+        ? `${(weightRows[weightRows.length - 1].weightKg - weightRows[0].weightKg).toFixed(1)} kg over ${weightRows.length} entries`
+        : null;
+      const existing = allSupps.map((s) => `${stackLine(s)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`);
 
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const bpReadings: any[] = Array.isArray(bloodPressure?.readings) ? (bloodPressure!.readings as any[]) : [];
+      const bpLatest = bpReadings.length ? bpReadings[bpReadings.length - 1] : null;
 
       const contextBlock = [
         "## User Profile",
@@ -161,9 +216,19 @@ HRV status: ${na(sleep.hrvStatus)}`
         hrv
           ? `HRV (last night): ${na(hrv.lastNight, " ms")} | 5-day avg: ${na(hrv.lastFiveDaysAvg, " ms")} | Status: ${na(hrv.status)}`
           : "No HRV data",
+        stress
+          ? `Stress avg: ${na(stress.avgStress, "/100")} | Max: ${na(stress.maxStress, "/100")}${stress.restPercent != null ? ` | Rest time: ${stress.restPercent}%` : ""}`
+          : "No stress data",
+        trainingStatus
+          ? `Training readiness: ${na(trainingStatus.readinessScore, "/100")} | Acute load: ${na(trainingStatus.acuteLoad)} | Chronic load: ${na(trainingStatus.chronicLoad)}`
+          : "No training status data",
+        bpLatest
+          ? `Blood pressure (latest): ${bpLatest.systolic}/${bpLatest.diastolic} mmHg${bpLatest.pulse != null ? ` (pulse ${bpLatest.pulse} bpm)` : ""}`
+          : "No blood pressure data",
+        weightTrend ? `Weight trend: ${weightTrend}` : "",
         "",
-        "## Current Supplement Stack",
-        existing.length ? existing.join(", ") : "None",
+        "## Current Supplement Stack (total daily doses + 7-day adherence)",
+        existing.length ? existing.join("\n") : "None",
         body.context ? `\n## Additional context\n${body.context}` : "",
       ].filter((l) => l !== undefined).join("\n");
 
@@ -178,10 +243,12 @@ Return JSON:
 }
 
 Rules:
-- Do NOT suggest anything already in the "Current Supplement Stack"
+- Do NOT suggest anything already in the "Current Supplement Stack" — including the same nutrient hidden inside a combo product (multivitamin, ZMA, electrolyte mix); check ingredient-level overlap, not just product names
+${DOSAGE_OVERLAP_RULES}
 - Every recommendation's "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
+- Suggested doses must be tailored to this user's age, sex, and body weight, and must stay safe when ADDED ON TOP of the current stack's cumulative totals
 - Prioritise the most impactful gaps first based on the data; if a health goal is stated, weight recommendations toward it
-- Consider age, sex, weight, activity level, VO2 max, body composition, nutrition gaps (low protein/fat/calories), sleep quality, HRV, and stress together
+- Consider age, sex, weight, activity level, VO2 max, body composition, blood pressure, training load, nutrition gaps (low protein/fat/calories), sleep quality, HRV, stress, and adherence patterns together
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
 - Return only valid JSON, no markdown`;
@@ -192,31 +259,60 @@ Rules:
 
     // ── generate how/when tips for existing stack ────────────────────────────
     if (body.action === "generate-tips") {
-      const [profile, allSupps, daily, sleep, hrv] = await Promise.all([
+      const [profile, allSupps, allEntries, daily, sleep, hrv, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
-        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-daily.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-sleep.json`),
-        readJson<Record<string, unknown>>(`garmin-cache/${new Date().toISOString().slice(0, 10)}-hrv.json`),
+        getAllEntries(),
+        readGarminCache("daily"),
+        readGarminCache("sleep"),
+        readGarminCache("hrv"),
+        readGarminCache("bodycomp"),
+        readGarminCache("stress"),
+        readGarminCache("trainingstatus"),
+        readGarminCache("bloodpressure"),
       ]);
 
       if (!allSupps.length) return NextResponse.json({ tips: [] });
 
+      const last7 = Array.from({ length: 7 }, (_, i) => isoLocalDate(-i));
+      const adherence = await getAdherenceForRange(allSupps.map((s) => s.id), last7);
+
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
       const stackLines = allSupps.map((s) =>
-        `- id:${s.id} | ${[s.brand, s.name].filter(Boolean).join(" ")} ${s.dose}${s.unit}${s.pills && s.pills > 1 ? ` × ${s.pills} pills` : ""} (currently: ${s.timeOfDay})`
+        `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`
       ).join("\n");
 
+      // 7-day fat/protein averages — relevant for absorption timing of fat-soluble vitamins
+      const last7Set = new Set(last7);
+      const fatDays: Record<string, { fat: number; protein: number }> = {};
+      for (const e of allEntries) {
+        if (!last7Set.has(e.date) || !e.customFood) continue;
+        if (!fatDays[e.date]) fatDays[e.date] = { fat: 0, protein: 0 };
+        fatDays[e.date].fat     += e.customFood.fat     * e.quantity;
+        fatDays[e.date].protein += e.customFood.protein * e.quantity;
+      }
+      const fd = Object.values(fatDays);
+      const avgN = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const bpReadings: any[] = Array.isArray(bloodPressure?.readings) ? (bloodPressure!.readings as any[]) : [];
+      const bpLatest = bpReadings.length ? bpReadings[bpReadings.length - 1] : null;
+
       const contextLines = [
-        profile ? `User: ${profile.age}y ${profile.sex}, ${profile.weightKg}kg, activity: ${profile.activityLevel}${profile.goal ? `, goal: ${profile.goal}` : ""}` : "",
+        profile ? `User: ${profile.age}y ${profile.sex}, ${profile.weightKg}kg, ${profile.heightCm}cm, activity: ${profile.activityLevel}${profile.goal ? `, goal: ${profile.goal}` : ""}` : "",
         daily ? `Steps: ${na(daily.steps)} | Active cal: ${na(daily.activeCalories)} | Stress: ${na(daily.avgStressLevel, "/100")} | Resting HR: ${na(daily.restingHeartRate, " bpm")}` : "",
         sleep ? `Sleep: ${sleep.totalSleepSeconds ? ((sleep.totalSleepSeconds as number) / 3600).toFixed(1) + "h" : "no data"} | Score: ${na(sleep.sleepScore)} | Deep: ${sleep.deepSleepSeconds ? Math.round((sleep.deepSleepSeconds as number) / 60) + "min" : "—"} | HRV status: ${na(sleep.hrvStatus)}` : "",
         hrv ? `HRV: ${na(hrv.lastNight, " ms")} | Status: ${na(hrv.status)}` : "",
+        stress ? `Stress avg: ${na(stress.avgStress, "/100")}${stress.restPercent != null ? ` | Rest time: ${stress.restPercent}%` : ""}` : "",
+        trainingStatus ? `Training readiness: ${na(trainingStatus.readinessScore, "/100")} | Acute load: ${na(trainingStatus.acuteLoad)}` : "",
+        bodyComp ? `Body fat: ${na(bodyComp.bodyFatPct, "%")} | Muscle mass: ${na(bodyComp.muscleMassKg, " kg")}` : "",
+        bpLatest ? `Blood pressure (latest): ${bpLatest.systolic}/${bpLatest.diastolic} mmHg` : "",
+        fd.length ? `Diet (7-day avg): fat ${avgN(fd.map((d) => d.fat))} g/day | protein ${avgN(fd.map((d) => d.protein))} g/day` : "",
       ].filter(Boolean).join("\n");
 
-      const prompt = `You are a certified supplement and nutrition expert. For each supplement in the user's stack below, provide personalized guidance on HOW and WHEN to take it, considering the user's health data and goal.
+      const prompt = `You are a certified supplement and nutrition expert. For each supplement in the user's stack below, provide personalized guidance on HOW and WHEN to take it, considering the dose, the rest of the stack, and the user's health data and goal.
 
-## User's supplement stack
+## User's supplement stack (total daily doses + 7-day adherence)
 ${stackLines}
 
 ## Health context
@@ -235,7 +331,11 @@ Return JSON with EXACTLY this shape:
 
 Rules:
 - Return one entry per supplement in the stack — use the exact id values from the list
+${DOSAGE_OVERLAP_RULES}
+- If a supplement's total daily dose is notably low or high for this user (age/sex/weight), say so in its usageTip with the suggested adjustment
+- If the same nutrient appears in more than one product in the stack, each affected usageTip must state the combined daily total and whether to adjust or space the doses
 - usageTip must be specific and actionable, referencing their goal or a data signal when relevant (e.g. "Take in the evening — your HRV of 38ms suggests your nervous system benefits from nighttime magnesium")
+- Use dietary fat intake when advising on fat-soluble vitamins (D, K2, E, A, omega-3): pair them with the fattiest meal
 - description must be concise and relevant to this specific user, not generic
 - Return only valid JSON, no markdown`;
 

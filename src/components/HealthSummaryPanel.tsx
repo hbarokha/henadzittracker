@@ -47,6 +47,8 @@ interface HealthSummary {
 interface Props {
   date: string;
   onSyncGarmin?: () => Promise<void>;
+  /** When false, initial generation is deferred (e.g. until Garmin data for the date has loaded). */
+  ready?: boolean;
 }
 
 function scoreColor(score: number): string {
@@ -300,7 +302,7 @@ function BioAgeCard({ data }: { data: BiologicalAge }) {
   );
 }
 
-export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
+export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -317,10 +319,17 @@ export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
       if (force && syncRef.current) {
         try { await syncRef.current(); } catch {}
       }
+      const now = new Date();
       const resp = await fetch("/api/ai/summary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date, force, time: `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}` }),
+        body: JSON.stringify({
+          date,
+          force,
+          time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+          // Client's local today — the server may be in a different timezone
+          today: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");
@@ -333,11 +342,25 @@ export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
     }
   }, [date]); // only date triggers re-generation; onSyncGarmin accessed via ref
 
+  // Date change invalidates the previous date's summary right away, so it is never
+  // shown attributed to the new date while we wait for Garmin data
   useEffect(() => {
     setSummary(null);
     setError(null);
+    setLoading(true);
+  }, [date]);
+
+  useEffect(() => {
+    if (!ready) {
+      // Keep the loading state visible while Garmin data is still being fetched,
+      // but don't wait forever — if the Garmin load hangs or its callback is lost,
+      // fall back to generating from whatever cache exists.
+      setLoading(true);
+      const fallback = setTimeout(() => generate(false), 25_000);
+      return () => clearTimeout(fallback);
+    }
     generate(false);
-  }, [generate]);
+  }, [generate, ready]);
 
   const overallScore = summary
     ? Math.round((summary.today.score + summary.week.score + summary.month.score) / 3)
@@ -360,7 +383,9 @@ export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
               AI Health Summary
             </h2>
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              {loading ? (onSyncGarmin ? "Syncing Garmin then analyzing…" : "Analyzing your data…") : "Powered by Gemini · all data combined"}
+              {loading
+                ? (!ready ? "Waiting for Garmin data…" : onSyncGarmin ? "Syncing Garmin then analyzing…" : "Analyzing your data…")
+                : "Powered by Gemini · all data combined"}
             </p>
           </div>
         </div>
@@ -412,7 +437,9 @@ export default function HealthSummaryPanel({ date, onSyncGarmin }: Props) {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>Analyzing your health data…</p>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            {ready ? "Analyzing your health data…" : "Waiting for Garmin data to finish loading…"}
+          </p>
           <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
             Combining nutrition, Garmin, sleep, supplements &amp; more
           </p>

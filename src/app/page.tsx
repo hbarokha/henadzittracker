@@ -188,14 +188,22 @@ export default function Home() {
   const [showGoals,   setShowGoals]   = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showGarminConnect, setShowGarminConnect] = useState(false);
-  const [garminStatus, setGarminStatus] = useState<GarminStatus>({ connected: false, username: null });
+  // null = status check still in flight — avoids flashing the Connect card on load
+  const [garminStatus, setGarminStatus] = useState<GarminStatus | null>(null);
+  // Date whose Garmin data GarminDashboard last finished loading. Keyed by date (not a
+  // boolean) so a date change invalidates it in the same render, and a stale in-flight
+  // load for a previous date can never mark the current date as ready.
+  const [garminLoadedDate, setGarminLoadedDate] = useState<string | null>(null);
   const [globalLoading, setGlobalLoading] = useState(false);
 
   const isToday = selectedDate === todayIso;
 
   useEffect(() => {
     setGoals(loadGoals());
-    fetch("/api/garmin/status").then((r) => r.json()).then(setGarminStatus).catch(() => {});
+    fetch("/api/garmin/status")
+      .then((r) => r.json())
+      .then(setGarminStatus)
+      .catch(() => setGarminStatus({ connected: false, username: null }));
   }, []);
 
   const fetchLog = useCallback(async () => {
@@ -377,9 +385,9 @@ export default function Home() {
 
             <div className="flex items-center gap-1">
               <IconBtn
-                onClick={() => garminStatus.connected ? disconnectGarmin() : setShowGarminConnect(true)}
-                title={garminStatus.connected ? `Garmin: ${garminStatus.username ?? "connected"} — click to disconnect` : "Connect Garmin"}
-                active={garminStatus.connected}
+                onClick={() => garminStatus?.connected ? disconnectGarmin() : setShowGarminConnect(true)}
+                title={garminStatus?.connected ? `Garmin: ${garminStatus.username ?? "connected"} — click to disconnect` : "Connect Garmin"}
+                active={garminStatus?.connected ?? false}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -466,7 +474,22 @@ export default function Home() {
             )}
 
             {/* Garmin */}
-            {garminStatus.connected ? (
+            {garminStatus === null ? (
+              <section>
+                <SectionHead label="Garmin Connect" />
+                <div
+                  className="rounded-2xl p-6 text-center"
+                  style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+                >
+                  <div className="loading-bar-track rounded-full mb-3">
+                    <div className="loading-bar-fill" style={{ background: "#38bdf8" }} />
+                  </div>
+                  <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                    Checking Garmin connection…
+                  </p>
+                </div>
+              </section>
+            ) : garminStatus.connected ? (
               <section>
                 <SectionHead label="Vitals — Garmin Connect" />
                 <GarminDashboard
@@ -474,6 +497,7 @@ export default function Home() {
                   foodCalories={totals.calories}
                   onSyncStart={() => setGlobalLoading(true)}
                   onSyncEnd={() => setGlobalLoading(false)}
+                  onDataLoaded={(loadedDate) => setGarminLoadedDate(loadedDate)}
                 />
               </section>
             ) : (
@@ -497,10 +521,14 @@ export default function Home() {
               </section>
             )}
 
-            {/* AI Health Summary */}
+            {/* AI Health Summary — waits until Garmin data for the date is freshly loaded */}
             <section>
               <SectionHead label="AI Health Analysis" />
-              <HealthSummaryPanel date={selectedDate} onSyncGarmin={garminStatus.connected ? syncGarmin : undefined} />
+              <HealthSummaryPanel
+                date={selectedDate}
+                onSyncGarmin={garminStatus?.connected ? syncGarmin : undefined}
+                ready={garminStatus !== null && (!garminStatus.connected || garminLoadedDate === selectedDate)}
+              />
             </section>
 
             {/* Weight chart */}
