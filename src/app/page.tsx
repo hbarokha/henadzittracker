@@ -526,6 +526,7 @@ export default function Home() {
               <SectionHead label="AI Health Analysis" />
               <HealthSummaryPanel
                 date={selectedDate}
+                goals={goals}
                 onSyncGarmin={garminStatus?.connected ? syncGarmin : undefined}
                 ready={garminStatus !== null && (!garminStatus.connected || garminLoadedDate === selectedDate)}
               />

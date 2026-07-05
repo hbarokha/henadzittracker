@@ -416,6 +416,33 @@ export async function POST(req: Request) {
   const bpAvg = (s: { avgSystolic: number | null; avgDiastolic: number | null }) =>
     s.avgSystolic != null && s.avgDiastolic != null ? `${s.avgSystolic}/${s.avgDiastolic} mmHg` : "no data";
 
+  // Precomputed deltas — Gemini comments on trends far better than it computes them
+  const delta = (cur: number | null, prev: number | null, unit = "") =>
+    cur != null && prev != null ? `${cur - prev >= 0 ? "+" : ""}${+(cur - prev).toFixed(1)}${unit}` : "n/a";
+
+  // Per-day series for the last 7 days — lets Gemini spot patterns averages erase
+  const dayRows = weekSnaps.map((s) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const acts = (s.activities ?? []).map((a: any) =>
+      `${a.activityType ?? "workout"}(${Math.round((a.durationSeconds ?? 0) / 60)}m)`).join("+") || "—";
+    const sleepStr = s.sleep?.totalSleepSeconds
+      ? `${(s.sleep.totalSleepSeconds / 3600).toFixed(1)}h (score ${s.sleep.sleepScore ?? "?"})`
+      : "—";
+    return `  ${s.date} | food ${s.food ? Math.round(s.food.calories) + " kcal" : "—"} | sleep ${sleepStr} | HRV ${s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv ?? "—"} | steps ${s.daily?.steps ?? "—"} | stress ${s.stress?.avgStress ?? s.daily?.avgStressLevel ?? "—"} | ${acts}`;
+  }).join("\n");
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prev: any = latest?.data ?? null;
+  const prevBlock = prev
+    ? `
+## PREVIOUS ANALYSIS (generated ${latest!.generatedAt} for ${latest!.date}) — for continuity
+Previous scores: today ${prev.today?.score ?? "?"}/10 | week ${prev.week?.score ?? "?"}/10 | month ${prev.month?.score ?? "?"}/10${prev.biologicalAge ? ` | biological age estimate: ${prev.biologicalAge.estimate}` : ""}
+Previous recommendations:
+${// eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (prev.recommendations ?? []).map((r: any) => `  - [${r.priority}] ${r.category}: ${r.text}`).join("\n") || "  none"}
+`
+    : "";
+
   const bpReadings: Array<{ timestamp: string; systolic: number; diastolic: number; pulse: number | null }> =
     d.bloodpressure?.readings ?? [];
   const bpLatest = bpReadings.length ? bpReadings[bpReadings.length - 1] : null;
@@ -449,9 +476,9 @@ ${todayBodyComp
   ? `Weight: ${na(todayBodyComp.weightKg, " kg")} | BMI: ${na(todayBodyComp.bmi)} | Body fat: ${na(todayBodyComp.bodyFatPct, "%")} | Muscle mass: ${na(todayBodyComp.muscleMassKg, " kg")} | Body water: ${na(todayBodyComp.bodyWaterPct, "%")}`
   : "No Garmin scale data for this date"}
 
-## CALORIE & MACRO GOALS
-Goal: ${tdee ?? 2000} kcal | Protein: 150 g | Carbs: 250 g | Fat: 65 g
-
+## CALORIE & MACRO GOALS${clientGoals ? " (user-configured)" : " (defaults)"}
+Goal: ${clientGoals?.calories ?? tdee ?? 2000} kcal | Protein: ${clientGoals?.protein ?? 150} g | Carbs: ${clientGoals?.carbs ?? 250} g | Fat: ${clientGoals?.fat ?? 65} g
+${prevBlock}
 ---
 
 ## TODAY — ${today}
@@ -509,6 +536,13 @@ ${supplements.map((s) => {
 
 ## LAST 7 DAYS — ${week7Start} → ${today}
 
+Daily breakdown:
+${dayRows}
+
+Vs prior week (${shiftDate(today, -13)} → ${shiftDate(today, -7)}) — precomputed deltas:
+  Sleep score ${delta(weekSum.avgSleepScore, prevWeekSum.avgSleepScore)} | Sleep ${delta(weekSum.avgSleepHours, prevWeekSum.avgSleepHours, " h")} | HRV ${delta(weekSum.avgHRV, prevWeekSum.avgHRV, " ms")} | Resting HR ${delta(weekSum.avgRestingHR, prevWeekSum.avgRestingHR, " bpm")}
+  Steps ${delta(weekSum.avgSteps, prevWeekSum.avgSteps)} | Stress ${delta(weekSum.avgStress, prevWeekSum.avgStress)} | Avg calories ${delta(weekSum.avgCalories, prevWeekSum.avgCalories, " kcal")} | Workouts ${delta(weekSum.workouts, prevWeekSum.workouts)} | Training load ${delta(weekSum.totalTrainingLoad, prevWeekSum.totalTrainingLoad)}
+
 Nutrition (${weekSum.daysLogged}/${weekSum.totalDays} days logged):
   Avg calories: ${na(weekSum.avgCalories, " kcal")} | Avg protein: ${na(weekSum.avgProtein, " g")} | Avg carbs: ${na(weekSum.avgCarbs, " g")} | Avg fat: ${na(weekSum.avgFat, " g")}
 
@@ -530,6 +564,9 @@ Activity:
 ---
 
 ## LAST 30 DAYS — ${mon30Start} → ${today}
+
+Momentum (last 15 days vs first 15 of the window) — precomputed deltas:
+  Sleep score ${delta(monSecondSum.avgSleepScore, monFirstSum.avgSleepScore)} | HRV ${delta(monSecondSum.avgHRV, monFirstSum.avgHRV, " ms")} | Resting HR ${delta(monSecondSum.avgRestingHR, monFirstSum.avgRestingHR, " bpm")} | Steps ${delta(monSecondSum.avgSteps, monFirstSum.avgSteps)} | Stress ${delta(monSecondSum.avgStress, monFirstSum.avgStress)} | Avg calories ${delta(monSecondSum.avgCalories, monFirstSum.avgCalories, " kcal")}
 
 Nutrition (${monSum.daysLogged}/${monSum.totalDays} days logged):
   Avg calories: ${na(monSum.avgCalories, " kcal")} | Avg protein: ${na(monSum.avgProtein, " g")} | Avg carbs: ${na(monSum.avgCarbs, " g")} | Avg fat: ${na(monSum.avgFat, " g")}
@@ -607,6 +644,10 @@ Scoring rules:
 - recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
 - Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
 - If Garmin data is missing for a period, say so and base the score on what is available
+- CONTINUITY: keep scores and the biologicalAge estimate consistent with the PREVIOUS ANALYSIS above (if present) — only move a score or the bio-age when a specific metric changed, and cite that metric as the reason
+- FOLLOW-UP: compare the previous recommendations against the current data — explicitly acknowledge progress or regression on at least one of them (in highlights, concerns, or a recommendation), e.g. "last time you were advised X — the data now shows Y"
+- Use the precomputed "Vs prior week" and "Momentum" deltas as the primary basis for the week/month trends — cite the delta values directly instead of inferring trends from single averages
+- Use the "Daily breakdown" table to spot day-level patterns (e.g. sleep dips after evening workouts, weekend nutrition gaps) and mention any clear one in the week summary or trends
 - TIME-AWARE recommendations (current bracket: ${bracket}):${
   bracket === "morning"   ? " prioritise what to do TODAY — meal plan, workout timing, which supplements to take first, energy management" :
   bracket === "afternoon" ? " focus on mid-day course corrections — are macros/calories on track, were morning supplements taken, afternoon energy dip strategies" :
@@ -616,29 +657,20 @@ Scoring rules:
 - Never suggest actions that are clearly past (no 'eat breakfast' at 9 pm, no 'morning run' at 11 pm)`;
 
   try {
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: "application/json" },
-        }),
-      }
-    );
+    const result = await callGeminiJSON(prompt, apiKey);
 
-    if (!resp.ok) {
-      const body = await resp.text();
-      return NextResponse.json({ error: `Gemini error ${resp.status}: ${body.slice(0, 300)}` }, { status: 502 });
-    }
+    // Deterministic data-coverage info for the UI — not entrusted to Gemini
+    result.dataCompleteness = {
+      days:  weekSnaps.length,
+      food:  weekSnaps.filter((s) => s.food).length,
+      sleep: weekSnaps.filter((s) => s.sleep?.totalSleepSeconds).length,
+      steps: weekSnaps.filter((s) => s.daily?.steps).length,
+      hrv:   weekSnaps.filter((s) => (s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv) != null).length,
+    };
 
-    const json = await resp.json();
-    const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
-
-    const result = JSON.parse(text);
-    await writeSummaryCache(date, bracket, result);
+    await writeSummaryCache(date, bracket, result, dataHash);
+    // Pointer to the most recent analysis — read back as coach memory on the next run
+    await writeJson("summary-cache/latest.json", { generatedAt: new Date().toISOString(), date, data: result });
     return NextResponse.json({ ...result, cached: false });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

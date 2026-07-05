@@ -99,8 +99,15 @@ the official developer program is currently suspended as of 2024).
 - Auto-generates on page load via Gemini — no button press required
 - Covers today, last 7 days, and last 30 days with per-period health scores (1–10)
 - Highlights, concerns, and 3–6 prioritized recommendations per analysis
-- Persisted to `data/summary-cache/YYYY-MM-DD-{bracket}.json` (per time-of-day bracket); cached summary for **today** expires after 1 hour (today's metrics change constantly), past dates after 12 hours
+- Persisted to `data/summary-cache/YYYY-MM-DD-{bracket}.json` (per time-of-day bracket) with a **data hash**; regenerates only when the underlying data actually changed (hash comparison, `syncedAt` excluded) — caches < 15 min old are served without any data reads
 - On page load the summary panel **waits for the Garmin dashboard to finish loading** (`ready` prop wired from `page.tsx` via GarminDashboard's `onDataLoaded`) so Gemini always reads the freshly synced cache, never the previous day's data
+- **User-configured macro goals** (localStorage ⚙️ modal) are sent with each request and used as the grading targets (previously hardcoded defaults)
+- **Precomputed trends**: server computes this-week-vs-prior-week deltas (sleep score, HRV, resting HR, steps, stress, calories, workouts, training load) and month momentum (last 15 days vs first 15) — Gemini cites deltas instead of inferring trends
+- **Per-day 7-day breakdown table** (food/sleep/HRV/steps/stress/workouts per date) lets Gemini spot day-level patterns averages erase
+- **Coach memory**: `summary-cache/latest.json` stores the most recent analysis; its scores, bio-age, and recommendations are fed back into the next prompt with continuity rules (scores/bio-age only move when a cited metric changed; explicit follow-up on previous recommendations)
+- **Gemini structured output** (`responseSchema`) + `temperature: 0.2` for stable, parse-safe responses; retry with backoff on 429/5xx, then fallback to `gemini-2.5-flash-lite`
+- **Data-coverage badges**: server returns deterministic 7-day coverage counts (food/sleep/steps/HRV) rendered under the panel header — missing data is visible, not just caveated by the AI
+- Single snapshot pass over the 30-day window (today/week/prior-week/month-halves are slices) — no duplicate cache reads
 - Manual ↺ Refresh button available to force a fresh generation at any time
 - Dedicated **Supplement Analysis** section: stack assessment (incl. per-supplement total-daily-dose adequacy vs safe upper limits), adherence insights, gaps (data-grounded, ingredient-level dedup vs combo products), timing tips (absorption competition + fat-soluble pairing), interactions incl. cross-product nutrient overlaps with cumulative totals
 - All available data is fed to Gemini: profile (age/sex/weight/BMR/TDEE), VO2 max, body composition, sleep stages + HRV status + 5-day avg HRV, training readiness score, acute/chronic training load, SpO2, respiration rate, intensity minutes vs WHO targets, full workout details (HR, distance, training effect, training load, PRs), body battery charged/drained, stress rest%, supplement adherence rates, weight trend, 7-day nutrition averages
@@ -244,7 +251,8 @@ data/
     YYYY-MM-DD-bodycomp.json        Cached Garmin scale body composition per date
     YYYY-MM-DD-usermetrics.json     Cached VO2 max (running + cycling) per date
   summary-cache/
-    YYYY-MM-DD-{bracket}.json       Persisted AI health summary per time-of-day bracket — today expires after 1h, past dates after 12h
+    YYYY-MM-DD-{bracket}.json       Persisted AI health summary per time-of-day bracket — regenerates when the data hash changes
+    latest.json                     Pointer to the most recent analysis — fed back into the next prompt as coach memory
   weight.json                       Body weight log (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
@@ -522,3 +530,4 @@ Activity multipliers:
 - [x] **AI summary waits for fresh Garmin data** — `HealthSummaryPanel` takes a `ready` prop; page wires it to GarminDashboard's `onDataLoaded(date)` callback so the summary generates only after the selected date's Garmin data is freshly cached; readiness is keyed by `garminLoadedDate === selectedDate` (not a boolean) so date changes invalidate it in the same render and stale in-flight loads can't mark the wrong date ready; a 25s fallback timer generates from cache if the Garmin load ever hangs; today's summary-cache TTL reduced 12h → 1h (past dates keep 12h), with "today" taken from the client-supplied local date to avoid server-timezone mismatches
 - [x] **Garmin today-cache freshness window** — `shouldFetch()` reuses today's cache when `syncedAt` is < 60s old, so the dashboard's 14 GET routes, the sync POST, and the AI-summary refresh no longer fire duplicate request bursts at Garmin (Cloudflare rate-limit protection)
 - [x] **Supplement AI dosage & overlap awareness** — shared `stackLine()` (total daily dose = dose × pills) and `DOSAGE_OVERLAP_RULES` injected into all four supplement AI actions; recommend/tips also get stress, training status, body comp, blood pressure, weight trend, 7-day adherence, and 7-day fat/protein averages; garmin cache reads fall back to yesterday when today isn't synced yet; AI summary supplement rules upgraded to require dose-adequacy checks and cross-product cumulative totals
+- [x] **AI summary quality overhaul** — real user macro goals sent from client (were hardcoded 150/250/65 defaults); precomputed week-vs-prior-week deltas + month momentum (last 15 vs first 15 days); per-day 7-day breakdown table in prompt; coach memory via `summary-cache/latest.json` (previous scores/bio-age/recommendations fed back with continuity + follow-up rules); Gemini `responseSchema` structured output + temperature 0.2; retry with backoff → `flash-lite` fallback on 429/5xx; hash-based cache invalidation (regenerate only when data changed, 15-min instant-serve window) replacing the 1h/12h TTL; deterministic data-coverage badges (food/sleep/steps/HRV per 7 days) in the panel; single 30-day snapshot pass eliminating duplicate cache reads

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import type { Goals } from "@/lib/goals";
 
 interface SummarySection {
   score: number;
@@ -33,6 +34,14 @@ interface BiologicalAge {
   topImprovement: string;
 }
 
+interface DataCompleteness {
+  days: number;
+  food: number;
+  sleep: number;
+  steps: number;
+  hrv: number;
+}
+
 interface HealthSummary {
   biologicalAge?: BiologicalAge;
   today: SummarySection;
@@ -40,6 +49,7 @@ interface HealthSummary {
   month: SummarySection;
   supplements?: SupplementAnalysis;
   recommendations: Recommendation[];
+  dataCompleteness?: DataCompleteness;
   cached?: boolean;
   cachedAt?: string;
 }
@@ -49,6 +59,8 @@ interface Props {
   onSyncGarmin?: () => Promise<void>;
   /** When false, initial generation is deferred (e.g. until Garmin data for the date has loaded). */
   ready?: boolean;
+  /** User-configured daily macro goals (localStorage) — sent to the server so Gemini grades against real targets. */
+  goals?: Goals;
 }
 
 function scoreColor(score: number): string {
@@ -302,7 +314,7 @@ function BioAgeCard({ data }: { data: BiologicalAge }) {
   );
 }
 
-export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true }: Props) {
+export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, goals }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -327,8 +339,8 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true }:
           date,
           force,
           time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
-          // Client's local today — the server may be in a different timezone
-          today: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+          // Real macro goals from the ⚙️ modal — otherwise the server only knows defaults
+          goals,
         }),
       });
       const data = await resp.json();
@@ -340,7 +352,7 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true }:
     } finally {
       setLoading(false);
     }
-  }, [date]); // only date triggers re-generation; onSyncGarmin accessed via ref
+  }, [date, goals]); // date/goals trigger re-generation; onSyncGarmin accessed via ref
 
   // Date change invalidates the previous date's summary right away, so it is never
   // shown attributed to the new date while we wait for Garmin data
@@ -486,6 +498,31 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true }:
               <p className="text-xs" style={{ color: "#f87171" }}>{error} — showing previous result</p>
             </div>
           )}
+          {/* Deterministic data-coverage badges (computed server-side, not by Gemini) */}
+          {summary.dataCompleteness && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+              <span className="text-[9px] uppercase tracking-wide"
+                style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                Data coverage · last {summary.dataCompleteness.days} days:
+              </span>
+              {([
+                ["Food",  summary.dataCompleteness.food],
+                ["Sleep", summary.dataCompleteness.sleep],
+                ["Steps", summary.dataCompleteness.steps],
+                ["HRV",   summary.dataCompleteness.hrv],
+              ] as [string, number][]).map(([label, n]) => {
+                const total = summary.dataCompleteness!.days;
+                const color = n >= total ? "#34d399" : n >= Math.ceil(total / 2) ? "var(--text-muted)" : "#fbbf24";
+                return (
+                  <span key={label} className="text-[9px] tabular-nums"
+                    style={{ fontFamily: "var(--font-mono)", color }}>
+                    {label} {n}/{total}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
           {/* Overall score */}
           {overallScore != null && (
             <div className="rounded-xl p-4 flex items-center gap-4"
