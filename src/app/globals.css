@@ -12,6 +12,7 @@
   /* Warm dark palette */
   --bg:           #0C0A08;
   --bg-surface:   #141210;
+  --bg-card:      #141210;  /* card surface — alias of --bg-surface */
   --bg-raised:    #1E1A17;
   --bg-high:      #2A2420;
   --border:       #2A2420;
