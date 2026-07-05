@@ -105,7 +105,7 @@ the official developer program is currently suspended as of 2024).
 - **Precomputed trends**: server computes this-week-vs-prior-week deltas (sleep score, HRV, resting HR, steps, stress, calories, workouts, training load) and month momentum (last 15 days vs first 15) — Gemini cites deltas instead of inferring trends
 - **Per-day 7-day breakdown table** (food/sleep/HRV/steps/stress/workouts per date) lets Gemini spot day-level patterns averages erase
 - **Coach memory**: `summary-cache/latest.json` stores the most recent analysis; its scores, bio-age, and recommendations are fed back into the next prompt with continuity rules (scores/bio-age only move when a cited metric changed; explicit follow-up on previous recommendations)
-- **Gemini structured output** (`responseSchema`) + `temperature: 0.2` for stable, parse-safe responses; retry with backoff on 429/5xx, then fallback to `gemini-2.5-flash-lite`
+- **Claude (Anthropic) is the primary provider** — the summary route calls `claude-opus-4-8` (override via `ANTHROPIC_SUMMARY_MODEL`, e.g. `claude-sonnet-5`) with adaptive thinking + structured output (`output_config.format` JSON schema) via the `@anthropic-ai/sdk`, streamed to avoid timeouts; **Gemini is the automatic fallback** when `ANTHROPIC_API_KEY` is unset or the Claude call fails. Gemini path keeps `responseSchema` + `temperature: 0.2`, retry-with-backoff on 429/5xx, then `gemini-2.5-flash-lite`. Only the summary uses Claude; all other AI routes (food text/photo/barcode, supplements) remain on Gemini
 - **Data-coverage badges**: server returns deterministic 7-day coverage counts (food/sleep/steps/HRV) rendered under the panel header — missing data is visible, not just caveated by the AI
 - Single snapshot pass over the 30-day window (today/week/prior-week/month-halves are slices) — no duplicate cache reads
 - Manual ↺ Refresh button available to force a fresh generation at any time
@@ -128,9 +128,11 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Add your Gemini API key to `.env`:
+Add your API keys to `.env`:
 ```
 GEMINI_API_KEY=your_key_here
+# Optional — enables Claude as the AI health summary provider (falls back to Gemini if absent)
+ANTHROPIC_API_KEY=your_anthropic_key_here
 ```
 
 Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-session/` — no env vars needed.
@@ -144,7 +146,8 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 | Styling     | Tailwind CSS 3                                      |
 | Font        | Bebas Neue / Syne / DM Sans / DM Mono (Google Fonts via next/font) |
 | Persistence | JSON file locally; Azure Blob Storage in production  |
-| AI          | Gemini 2.5 Flash Lite (REST API)                    |
+| AI (summary)| Claude (`@anthropic-ai/sdk`, default `claude-opus-4-8`) — Gemini fallback |
+| AI (other)  | Gemini 2.5 Flash (REST API) — food text/photo/barcode, supplements |
 | Garmin      | Unofficial Garmin Connect API (`garmin-connect` npm + MFA patch) |
 | Runtime     | Node.js (via Next.js API routes)                    |
 
@@ -152,7 +155,9 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 
 | Variable                          | Description                                                    |
 |-----------------------------------|----------------------------------------------------------------|
-| `GEMINI_API_KEY`                  | Google Gemini API key                                          |
+| `GEMINI_API_KEY`                  | Google Gemini API key — food/supplement AI + summary fallback  |
+| `ANTHROPIC_API_KEY`               | Anthropic (Claude) key — primary AI health summary provider (optional; falls back to Gemini) |
+| `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary (default `claude-opus-4-8`; e.g. `claude-sonnet-5`) |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage connection string (empty = local fs mode)   |
 | `AZURE_STORAGE_CONTAINER`         | Blob container name (default: `henadzittracker`)                    |
 
@@ -531,3 +536,4 @@ Activity multipliers:
 - [x] **Garmin today-cache freshness window** — `shouldFetch()` reuses today's cache when `syncedAt` is < 60s old, so the dashboard's 14 GET routes, the sync POST, and the AI-summary refresh no longer fire duplicate request bursts at Garmin (Cloudflare rate-limit protection)
 - [x] **Supplement AI dosage & overlap awareness** — shared `stackLine()` (total daily dose = dose × pills) and `DOSAGE_OVERLAP_RULES` injected into all four supplement AI actions; recommend/tips also get stress, training status, body comp, blood pressure, weight trend, 7-day adherence, and 7-day fat/protein averages; garmin cache reads fall back to yesterday when today isn't synced yet; AI summary supplement rules upgraded to require dose-adequacy checks and cross-product cumulative totals
 - [x] **AI summary quality overhaul** — real user macro goals sent from client (were hardcoded 150/250/65 defaults); precomputed week-vs-prior-week deltas + month momentum (last 15 vs first 15 days); per-day 7-day breakdown table in prompt; coach memory via `summary-cache/latest.json` (previous scores/bio-age/recommendations fed back with continuity + follow-up rules); Gemini `responseSchema` structured output + temperature 0.2; retry with backoff → `flash-lite` fallback on 429/5xx; hash-based cache invalidation (regenerate only when data changed, 15-min instant-serve window) replacing the 1h/12h TTL; deterministic data-coverage badges (food/sleep/steps/HRV per 7 days) in the panel; single 30-day snapshot pass eliminating duplicate cache reads
+- [x] **AI health summary on Claude** — summary route now calls Claude (`claude-opus-4-8` default, `ANTHROPIC_SUMMARY_MODEL` override) via `@anthropic-ai/sdk` with adaptive thinking + `output_config.format` structured output (standard JSON Schema, `additionalProperties:false`), streamed; `generateSummary()` dispatcher tries Claude first and auto-falls back to Gemini if `ANTHROPIC_API_KEY` is unset or the Claude call throws; all other AI routes stay on Gemini

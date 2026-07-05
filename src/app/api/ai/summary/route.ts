@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
+import Anthropic from "@anthropic-ai/sdk";
 import { getAllEntries, type DbEntry } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
@@ -259,6 +260,117 @@ async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
   throw lastError ?? new Error("Gemini call failed");
 }
 
+// ── Claude (Anthropic) — primary summary provider ─────────────────────────────
+// Standard JSON Schema (lowercase types, additionalProperties:false everywhere) —
+// Claude's structured-output format differs from Gemini's uppercase responseSchema.
+
+const claudeSection = (extra: Record<string, unknown>) => ({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    score: { type: "integer" },
+    headline: { type: "string" },
+    summary: { type: "string" },
+    ...extra,
+  },
+  required: ["score", "headline", "summary", ...Object.keys(extra)],
+});
+
+const strArray = { type: "array", items: { type: "string" } };
+
+const CLAUDE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    biologicalAge: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        estimate: { type: "integer" },
+        delta: { type: "integer" },
+        confidence: { type: "string", enum: ["high", "medium", "low"] },
+        keyFactors: strArray,
+        topImprovement: { type: "string" },
+      },
+      required: ["estimate", "delta", "confidence", "keyFactors", "topImprovement"],
+    },
+    today: claudeSection({ highlights: strArray, concerns: strArray }),
+    week: claudeSection({ trends: strArray }),
+    month: claudeSection({ trends: strArray }),
+    supplements: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        stackAssessment: { type: "string" },
+        adherenceInsight: { type: "string" },
+        gaps: strArray,
+        timing: strArray,
+        interactions: strArray,
+      },
+      required: ["stackAssessment", "adherenceInsight", "gaps", "timing", "interactions"],
+    },
+    recommendations: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          priority: { type: "string", enum: ["high", "medium", "low"] },
+          category: { type: "string", enum: ["nutrition", "sleep", "exercise", "recovery", "supplements", "stress", "hydration"] },
+          text: { type: "string" },
+        },
+        required: ["priority", "category", "text"],
+      },
+    },
+  },
+  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
+};
+
+// Opus-tier reasoning is the point of using Claude here; override via env if desired.
+const CLAUDE_SUMMARY_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-opus-4-8";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callClaudeJSON(prompt: string, apiKey: string): Promise<any> {
+  const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
+  const stream = client.messages.stream({
+    model: CLAUDE_SUMMARY_MODEL,
+    max_tokens: 16000,
+    // Adaptive thinking sharpens the bio-age/score reasoning; structured output keeps
+    // the final block valid JSON. Streaming avoids HTTP timeouts at this max_tokens.
+    thinking: { type: "adaptive" },
+    output_config: { format: { type: "json_schema", schema: CLAUDE_SCHEMA } },
+    messages: [{ role: "user", content: prompt }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
+  const text = msg.content
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .filter((b: any) => b.type === "text")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((b: any) => b.text)
+    .join("");
+  if (!text) throw new Error("Empty Claude response");
+  return JSON.parse(text);
+}
+
+// Provider dispatch: Claude primary (best reasoning), Gemini as automatic fallback
+// so a missing/failing Anthropic key never takes the summary down.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function generateSummary(prompt: string): Promise<any> {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (anthropicKey) {
+    try {
+      return await callClaudeJSON(prompt, anthropicKey);
+    } catch (e) {
+      if (!geminiKey) throw e;
+      console.warn("Claude summary failed, falling back to Gemini:", e instanceof Error ? e.message : e);
+    }
+  }
+  if (geminiKey) return callGeminiJSON(prompt, geminiKey);
+  throw new Error("No AI provider configured");
+}
+
 // ── summary cache ─────────────────────────────────────────────────────────────
 
 interface CachedSummary {
@@ -290,8 +402,8 @@ export async function POST(req: Request) {
   const { date, force, time: clientTime, goals: clientGoals } = await req.json();
   if (!date) return NextResponse.json({ error: "date required" }, { status: 400 });
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY not set" }, { status: 500 });
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY)
+    return NextResponse.json({ error: "No AI API key set (ANTHROPIC_API_KEY or GEMINI_API_KEY)" }, { status: 500 });
 
   // Derive time bracket from client-supplied HH:MM, or fall back to server clock
   const timeStr: string = clientTime ?? `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}`;
@@ -657,7 +769,7 @@ Scoring rules:
 - Never suggest actions that are clearly past (no 'eat breakfast' at 9 pm, no 'morning run' at 11 pm)`;
 
   try {
-    const result = await callGeminiJSON(prompt, apiKey);
+    const result = await generateSummary(prompt);
 
     // Deterministic data-coverage info for the UI — not entrusted to Gemini
     result.dataCompleteness = {

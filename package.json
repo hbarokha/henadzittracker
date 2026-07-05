@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "@azure/storage-blob": "^12.32.0",
     "axios-cookiejar-support": "^7.0.0",
     "garmin-connect": "^1.6.2",
