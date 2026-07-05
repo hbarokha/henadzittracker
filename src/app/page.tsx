@@ -9,6 +9,7 @@ import WeeklyChart     from "@/components/WeeklyChart";
 import GoalsModal      from "@/components/GoalsModal";
 import ProfilePanel    from "@/components/ProfilePanel";
 import SupplementLog   from "@/components/SupplementLog";
+import SupplementPlanner from "@/components/SupplementPlanner";
 import WeightChart     from "@/components/WeightChart";
 import GarminDashboard from "@/components/GarminDashboard";
 import GarminConnectModal from "@/components/GarminConnectModal";
@@ -182,6 +183,7 @@ export default function Home() {
   const [todayIso]    = useState(isoToday);
   const [selectedDate, setSelectedDate] = useState(isoToday);
   const [activeTab, setActiveTab] = useState<AppTab>("overview");
+  const [supplementView, setSupplementView] = useState<"daily" | "plan">("daily");
   const [entries,     setEntries]  = useState<LogEntry[]>([]);
   const [goals,       setGoals]    = useState<Goals>(DEFAULT_GOALS);
   const [stats,       setStats]    = useState<StatsData | null>(null);
@@ -568,8 +570,30 @@ export default function Home() {
         {activeTab === "supplements" && (
           <div className="space-y-6">
             <section>
-              <SectionHead label="Daily Supplements" />
-              <SupplementLog date={selectedDate} />
+              <SectionHead label={supplementView === "daily" ? "Daily Supplements" : "Weekly Supplement Plan"}>
+                <div className="flex rounded-lg overflow-hidden shrink-0" style={{ border: "1px solid var(--border)" }}>
+                  {(["daily", "plan"] as const).map((v) => {
+                    const isActive = supplementView === v;
+                    return (
+                      <button
+                        key={v}
+                        onClick={() => setSupplementView(v)}
+                        className="px-3 py-1 text-[11px] font-semibold transition-colors"
+                        style={{
+                          fontFamily: "var(--font-mono)",
+                          background: isActive ? "var(--amber-dim)" : "transparent",
+                          color: isActive ? "var(--amber)" : "var(--text-muted)",
+                        }}
+                      >
+                        {v === "daily" ? "Daily log" : "Weekly plan"}
+                      </button>
+                    );
+                  })}
+                </div>
+              </SectionHead>
+              {supplementView === "daily"
+                ? <SupplementLog date={selectedDate} />
+                : <SupplementPlanner onApplied={() => {}} />}
             </section>
           </div>
         )}

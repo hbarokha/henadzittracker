@@ -17,6 +17,7 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 
 ### Vitamins & Supplements
 - Log daily vitamins and supplements (name, dose, unit, frequency)
+- **Weekly plan screen** — toggle in the Supplements tab (Daily log / Weekly plan). Lists every supplement from history (active + previously-removed, deduped by name+brand) with a data-grounded suggestion pre-checked from recent use (active OR taken in the last 14 days). Each row shows the suggested dose/unit/pills/time; apply the suggestion as-is or edit to choose your own. "Apply plan" reconciles the active stack to the checked set (reactivating + updating existing library entries by id so adherence history stays linked, creating new ones, deactivating the rest); the daily checklist reflects it immediately
 - Supplement library — save custom entries for one-tap logging
 - Track adherence streak per supplement
 - Daily supplement checklist grouped by time of day (Morning / Afternoon / Evening)
@@ -171,7 +172,7 @@ src/
       log/[id]/route.ts             DELETE — remove food entry
       stats/route.ts                GET — streak + 7-day calorie history
       profile/route.ts              GET/PUT — user profile (age, height, weight, sex, activity)
-      supplements/route.ts          GET/POST — supplement library + daily log
+      supplements/route.ts          GET/POST — supplement library + daily log; GET ?plan=1 → history candidates; POST action=plan → reconcile weekly stack
       supplements/[id]/route.ts     DELETE — remove supplement entry
       weight/route.ts               GET/POST — body weight log entries
       garmin/
@@ -216,6 +217,7 @@ src/
     HealthSummaryPanel.tsx          AI health summary (CSS-variable styled); biological age card + today/week/month scores + supplement analysis + recommendations
     ProfilePanel.tsx                Age / height / weight / sex / activity / health goal + BMR/TDEE
     SupplementLog.tsx               Daily checklist + library; CSS-variable styled; adherence progress bar; inline tip display (line-clamped); ✨ Tips button generates per-supplement AI guidance; inline edit for dose/unit/pills/time
+    SupplementPlanner.tsx           Weekly plan screen — history candidates with suggested pre-selection, per-row editable dose/unit/pills/time, apply-suggestion-or-choose-own, "Apply plan" reconciles the active stack
     WeightChart.tsx                 Body weight trend line chart
     GarminConnectModal.tsx          Email/password login form + session status
     GarminDashboard.tsx             All Garmin metrics + workout cards (single file)
@@ -227,7 +229,7 @@ src/
     gemini.ts                       Gemini REST wrapper + NutritionFood type
     profile.ts                      UserProfile interface + BMR/TDEE calculations
     garmin.ts                       Session client + all typed fetch helpers + interfaces
-    supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange()
+    supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange() + getSupplementHistory()/applyWeeklyPlan() (weekly planner)
     weight-db.ts                    Body weight blob/file persistence helpers
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
 data/
@@ -537,3 +539,4 @@ Activity multipliers:
 - [x] **Supplement AI dosage & overlap awareness** — shared `stackLine()` (total daily dose = dose × pills) and `DOSAGE_OVERLAP_RULES` injected into all four supplement AI actions; recommend/tips also get stress, training status, body comp, blood pressure, weight trend, 7-day adherence, and 7-day fat/protein averages; garmin cache reads fall back to yesterday when today isn't synced yet; AI summary supplement rules upgraded to require dose-adequacy checks and cross-product cumulative totals
 - [x] **AI summary quality overhaul** — real user macro goals sent from client (were hardcoded 150/250/65 defaults); precomputed week-vs-prior-week deltas + month momentum (last 15 vs first 15 days); per-day 7-day breakdown table in prompt; coach memory via `summary-cache/latest.json` (previous scores/bio-age/recommendations fed back with continuity + follow-up rules); Gemini `responseSchema` structured output + temperature 0.2; retry with backoff → `flash-lite` fallback on 429/5xx; hash-based cache invalidation (regenerate only when data changed, 15-min instant-serve window) replacing the 1h/12h TTL; deterministic data-coverage badges (food/sleep/steps/HRV per 7 days) in the panel; single 30-day snapshot pass eliminating duplicate cache reads
 - [x] **AI health summary on Claude** — summary route now calls Claude (`claude-opus-4-8` default, `ANTHROPIC_SUMMARY_MODEL` override) via `@anthropic-ai/sdk` with adaptive thinking + `output_config.format` structured output (standard JSON Schema, `additionalProperties:false`), streamed; `generateSummary()` dispatcher tries Claude first and auto-falls back to Gemini if `ANTHROPIC_API_KEY` is unset or the Claude call throws; all other AI routes stay on Gemini
+- [x] **Weekly supplement planner** — `getSupplementHistory()` (dedupes full library by name+brand, recent-14-day adherence, suggests active-or-recently-taken) + `applyWeeklyPlan()` (reconciles active stack, reuses ids to preserve adherence linkage) in `lib/supplements.ts`; `GET ?plan=1` / `POST action=plan` route actions; `SupplementPlanner.tsx` screen with Daily-log/Weekly-plan toggle in the Supplements tab; per-row apply-suggestion-or-edit; malformed history entries (missing name) skipped defensively

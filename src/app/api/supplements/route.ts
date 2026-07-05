@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getLogForDate, setTaken, updateSupplement, type TimeOfDay } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getLogForDate, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, type TimeOfDay, type PlanItem } from "@/lib/supplements";
 
 const VALID_TIMES = new Set<string>(["morning", "afternoon", "evening", "any"]);
 function sanitizeTime(t: string | undefined): TimeOfDay {
@@ -8,6 +8,9 @@ function sanitizeTime(t: string | undefined): TimeOfDay {
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
+  if (searchParams.get("plan")) {
+    return NextResponse.json({ candidates: await getSupplementHistory() });
+  }
   const date = searchParams.get("date");
   if (date) {
     // Sequential: getLogForDate reads and conditionally writes the same blob as getAllSupplements
@@ -33,6 +36,23 @@ export async function POST(req: Request) {
   if (body.action === "update") {
     await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: sanitizeTime(body.timeOfDay) });
     return NextResponse.json({ ok: true });
+  }
+  if (body.action === "plan") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: any[] = Array.isArray(body.items) ? body.items : [];
+    const items: PlanItem[] = raw
+      .filter((it) => it?.name?.toString().trim() && Number(it.dose) > 0)
+      .map((it) => ({
+        id: it.id ? String(it.id) : undefined,
+        name: String(it.name).trim(),
+        brand: it.brand ? String(it.brand).trim() : undefined,
+        dose: Number(it.dose),
+        unit: it.unit,
+        pills: it.pills ? Number(it.pills) : undefined,
+        timeOfDay: sanitizeTime(it.timeOfDay),
+      }));
+    const res = await applyWeeklyPlan(items);
+    return NextResponse.json({ ok: true, ...res });
   }
   if (!body.name?.trim()) return NextResponse.json({ error: "Name required" }, { status: 400 });
   const parsedDose = Number(body.dose);
