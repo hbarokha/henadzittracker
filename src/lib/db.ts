@@ -1,4 +1,4 @@
-import { readJson, writeJson } from "@/lib/storage";
+import { readJson, mutateJson } from "@/lib/storage";
 
 export interface CustomFood {
   name: string;
@@ -25,12 +25,10 @@ interface Database { log: DbEntry[] }
 
 const BLOB = "log.json";
 
+const EMPTY: Database = { log: [] };
+
 async function readDB(): Promise<Database> {
   return (await readJson<Database>(BLOB)) ?? { log: [] };
-}
-
-async function writeDB(db: Database): Promise<void> {
-  await writeJson(BLOB, db);
 }
 
 export async function getLogByDate(date: string): Promise<DbEntry[]> {
@@ -48,7 +46,6 @@ export async function addLogEntry(params: {
   foodId?: number;
   customFood?: CustomFood;
 }): Promise<DbEntry> {
-  const db = await readDB();
   const entry: DbEntry = {
     id: Date.now().toString(),
     ...(params.foodId !== undefined ? { foodId: params.foodId } : {}),
@@ -58,15 +55,18 @@ export async function addLogEntry(params: {
     mealCategory: params.mealCategory,
     createdAt: new Date().toISOString(),
   };
-  db.log.push(entry);
-  await writeDB(db);
+  await mutateJson<Database>(BLOB, EMPTY, (db) => {
+    db.log.push(entry);
+    return { write: true };
+  });
   return entry;
 }
 
 export async function deleteLogEntry(id: string): Promise<boolean> {
-  const db = await readDB();
-  const before = db.log.length;
-  db.log = db.log.filter((e) => e.id !== id);
-  if (db.log.length < before) { await writeDB(db); return true; }
-  return false;
+  const removed = await mutateJson<Database, boolean>(BLOB, EMPTY, (db) => {
+    const before = db.log.length;
+    db.log = db.log.filter((e) => e.id !== id);
+    return { write: db.log.length < before, result: db.log.length < before };
+  });
+  return removed ?? false;
 }

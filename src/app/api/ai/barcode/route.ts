@@ -65,6 +65,10 @@ export async function GET(req: Request) {
   function perServing(key: string): number {
     if (n[`${key}_serving`] != null) return num(n[`${key}_serving`]);
     if (n[`${key}_100g`] != null && servingG) return num(n[`${key}_100g`]) * servingG / 100;
+    // Fallback: no serving info — use the per-100g value directly, mirroring the kcal
+    // calc below so macros stay consistent with calories (never calories-with-zero-macros).
+    if (n[`${key}_100g`] != null) return num(n[`${key}_100g`]);
+    if (n[key] != null) return num(n[key]);
     return 0;
   }
 
@@ -80,7 +84,9 @@ export async function GET(req: Request) {
   }
 
   const name = (p.product_name_en ?? p.product_name ?? "Unknown product").trim();
-  const serving = p.serving_size ?? (servingG ? `${servingG}g` : "per serving");
+  // When no serving info exists we report per-100g figures (see kcal + perServing above),
+  // so label it "100g" rather than a misleading "per serving".
+  const serving = p.serving_size ?? (servingG ? `${servingG}g` : "100g");
 
   return NextResponse.json({
     food: {

@@ -1,4 +1,4 @@
-import { readJson, writeJson } from "@/lib/storage";
+import { readJson, mutateJson } from "@/lib/storage";
 
 export type SupplementUnit = "mg" | "mcg" | "IU" | "g";
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
@@ -30,13 +30,13 @@ interface SupplementsData {
 }
 
 const BLOB = "supplements.json";
+const EMPTY: SupplementsData = { supplements: [], log: [] };
 
+// Pure read — never writes. All mutations go through mutateJson so concurrent
+// read-modify-write cycles can't silently drop each other's data (ETag-conditional
+// blob writes with retry).
 async function loadData(): Promise<SupplementsData> {
   return (await readJson<SupplementsData>(BLOB)) ?? { supplements: [], log: [] };
-}
-
-async function saveData(data: SupplementsData): Promise<void> {
-  await writeJson(BLOB, data);
 }
 
 export async function getAllSupplements(): Promise<Supplement[]> {
@@ -44,10 +44,11 @@ export async function getAllSupplements(): Promise<Supplement[]> {
 }
 
 export async function addSupplement(s: Omit<Supplement, "id" | "createdAt" | "active">): Promise<Supplement> {
-  const data = await loadData();
   const entry: Supplement = { ...s, id: String(Date.now()), active: true, createdAt: new Date().toISOString() };
-  data.supplements.push(entry);
-  await saveData(data);
+  await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
+    data.supplements.push(entry);
+    return { write: true };
+  });
   return entry;
 }
 
@@ -55,29 +56,91 @@ export async function updateSupplement(
   id: string,
   patch: Partial<Pick<Supplement, "description" | "usageTip" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay">>
 ): Promise<void> {
-  const data = await loadData();
-  const s = data.supplements.find((x) => x.id === id);
-  if (s) { Object.assign(s, patch); await saveData(data); }
+  await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
+    const s = data.supplements.find((x) => x.id === id);
+    if (!s) return { write: false };
+    Object.assign(s, patch);
+    return { write: true };
+  });
 }
 
-export async function deleteSupplement(id: string): Promise<void> {
-  const data = await loadData();
-  const s = data.supplements.find((x) => x.id === id);
-  if (s) { s.active = false; await saveData(data); }
+// Deactivate a supplement (drops it from the active stack). When a date is given, its log
+// entry for that date is also removed so it disappears from the day you're viewing — without
+// this, a supplement already taken today would linger, since getDailyView keeps taken items
+// visible for history. Other dates' taken records are preserved.
+export async function deleteSupplement(id: string, date?: string): Promise<void> {
+  await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
+    const s = data.supplements.find((x) => x.id === id);
+    if (!s) return { write: false };
+    s.active = false;
+    if (date) data.log = data.log.filter((l) => !(l.supplementId === id && l.date === date));
+    return { write: true };
+  });
 }
 
+// Log rows for a date, for the currently-active stack. Pure read: entries that don't
+// exist yet are synthesized as unchecked rows rather than persisted — setTaken() creates
+// the real entry on first check-off, so GETs never write (no blob churn, no write races
+// from simply viewing a day).
 export async function getLogForDate(date: string): Promise<SupplementLog[]> {
   const data = await loadData();
-  const active = new Set(data.supplements.filter((s) => s.active).map((s) => s.id));
-  let dirty = false;
-  for (const id of active) {
-    if (!data.log.find((l) => l.supplementId === id && l.date === date)) {
-      data.log.push({ supplementId: id, date, taken: false, takenAt: null });
-      dirty = true;
+  const active = data.supplements.filter((s) => s.active);
+  const activeIds = new Set(active.map((s) => s.id));
+  const log = data.log.filter((l) => l.date === date && activeIds.has(l.supplementId));
+  for (const s of active) {
+    if (!log.some((l) => l.supplementId === s.id)) {
+      log.push({ supplementId: s.id, date, taken: false, takenAt: null });
     }
   }
-  if (dirty) await saveData(data);
-  return data.log.filter((l) => l.date === date && active.has(l.supplementId));
+  return log;
+}
+
+// Full checklist view for a date. The active stack changes over time (each weekly-plan
+// reconcile deactivates dropped supplements and can add new ones), so a given day's list
+// must reflect the stack AS IT WAS THEN, not today's stack. We reconstruct it from the two
+// things we persist per supplement: `createdAt` (when it entered the library) and the
+// per-day taken log. A supplement belongs on date D's list when:
+//   (a) it is currently active AND already existed on D (createdAt <= D) — the retro-
+//       loggable stack for that day; createdAt stops later-added supplements from leaking
+//       backwards into earlier days, or
+//   (b) it was actually TAKEN on D — preserves history even after it's been deactivated
+//       (removed or dropped by a weekly-plan change), so checked items are never lost.
+export async function getDailyView(date: string): Promise<{ supplements: Supplement[]; log: SupplementLog[] }> {
+  const data = await loadData();
+
+  // Only supplements with a usable name can be shown/logged — skip malformed historical
+  // entries (some old records have no name) so the checklist never renders blank rows.
+  const named = (s: Supplement) => (s.name ?? "").trim().length > 0;
+
+  // (a) Active stack that already existed on this date. Compare calendar dates (createdAt
+  //     is a UTC ISO timestamp; date is a local YYYY-MM-DD) — close enough for a day view.
+  const eligibleActive = data.supplements.filter(
+    (s) => named(s) && s.active && (s.createdAt ?? "").slice(0, 10) <= date
+  );
+
+  // (b) Anything taken on this date whose record still has a name — keeps checked items
+  //     visible even if now inactive (dropped by a weekly-plan change or removed).
+  const namedIds = new Set(data.supplements.filter(named).map((s) => s.id));
+  const takenIds = new Set(
+    data.log
+      .filter((l) => l.date === date && l.taken && namedIds.has(l.supplementId))
+      .map((l) => l.supplementId)
+  );
+
+  const displayIds = new Set<string>([...eligibleActive.map((s) => s.id), ...takenIds]);
+  const supplements = data.supplements.filter((s) => displayIds.has(s.id));
+  const log = data.log.filter((l) => l.date === date && displayIds.has(l.supplementId));
+
+  // Virtual backfill — this is a pure read. Unchecked rows for the eligible stack are
+  // synthesized in the response, not persisted; setTaken() creates the real entry on the
+  // first check-off. Browsing past days therefore writes nothing.
+  for (const s of eligibleActive) {
+    if (!log.some((l) => l.supplementId === s.id)) {
+      log.push({ supplementId: s.id, date, taken: false, takenAt: null });
+    }
+  }
+
+  return { supplements, log };
 }
 
 export async function getAdherenceForRange(
@@ -94,15 +157,16 @@ export async function getAdherenceForRange(
 }
 
 export async function setTaken(supplementId: string, date: string, taken: boolean): Promise<void> {
-  const data = await loadData();
-  const entry = data.log.find((l) => l.supplementId === supplementId && l.date === date);
-  if (entry) {
-    entry.taken = taken;
-    entry.takenAt = taken ? new Date().toISOString() : null;
-  } else {
-    data.log.push({ supplementId, date, taken, takenAt: taken ? new Date().toISOString() : null });
-  }
-  await saveData(data);
+  await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
+    const entry = data.log.find((l) => l.supplementId === supplementId && l.date === date);
+    if (entry) {
+      entry.taken = taken;
+      entry.takenAt = taken ? new Date().toISOString() : null;
+    } else {
+      data.log.push({ supplementId, date, taken, takenAt: taken ? new Date().toISOString() : null });
+    }
+    return { write: true };
+  });
 }
 
 // ── Weekly planning ───────────────────────────────────────────────────────────
@@ -198,43 +262,44 @@ export interface PlanItem {
 // deactivated. The daily checklist reads active supplements, so it reflects this
 // immediately. Adherence history stays linked because ids are reused.
 export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount: number }> {
-  const data = await loadData();
-  const keep = new Set<string>();
   const base = Date.now();
-  let n = 0;
+  const result = await mutateJson<SupplementsData, { activeCount: number }>(BLOB, EMPTY, (data) => {
+    const keep = new Set<string>();
+    let n = 0;
 
-  for (const it of items) {
-    let entry = it.id ? data.supplements.find((s) => s.id === it.id) : undefined;
-    if (entry) {
-      entry.active = true;
-      entry.name = it.name;
-      entry.brand = it.brand || undefined;
-      entry.dose = it.dose;
-      entry.unit = it.unit;
-      entry.pills = it.pills;
-      entry.timeOfDay = it.timeOfDay;
-      // description / usageTip intentionally left untouched
-    } else {
-      entry = {
-        id: `${base}${(n++).toString(36)}`,
-        name: it.name,
-        brand: it.brand || undefined,
-        dose: it.dose,
-        unit: it.unit,
-        pills: it.pills,
-        timeOfDay: it.timeOfDay,
-        active: true,
-        createdAt: new Date().toISOString(),
-      };
-      data.supplements.push(entry);
+    for (const it of items) {
+      let entry = it.id ? data.supplements.find((s) => s.id === it.id) : undefined;
+      if (entry) {
+        entry.active = true;
+        entry.name = it.name;
+        entry.brand = it.brand || undefined;
+        entry.dose = it.dose;
+        entry.unit = it.unit;
+        entry.pills = it.pills;
+        entry.timeOfDay = it.timeOfDay;
+        // description / usageTip intentionally left untouched
+      } else {
+        entry = {
+          id: `${base}${(n++).toString(36)}`,
+          name: it.name,
+          brand: it.brand || undefined,
+          dose: it.dose,
+          unit: it.unit,
+          pills: it.pills,
+          timeOfDay: it.timeOfDay,
+          active: true,
+          createdAt: new Date().toISOString(),
+        };
+        data.supplements.push(entry);
+      }
+      keep.add(entry.id);
     }
-    keep.add(entry.id);
-  }
 
-  for (const s of data.supplements) {
-    if (!keep.has(s.id)) s.active = false;
-  }
+    for (const s of data.supplements) {
+      if (!keep.has(s.id)) s.active = false;
+    }
 
-  await saveData(data);
-  return { activeCount: keep.size };
+    return { write: true, result: { activeCount: keep.size } };
+  });
+  return result!;
 }

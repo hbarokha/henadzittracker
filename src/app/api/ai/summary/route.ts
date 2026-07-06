@@ -1,375 +1,13 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
-import Anthropic from "@anthropic-ai/sdk";
-import { getAllEntries, type DbEntry } from "@/lib/db";
+import { getAllEntries } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson, writeJson } from "@/lib/storage";
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-async function readGarminCache<T>(date: string, key: string): Promise<T | null> {
-  return readJson<T>(`garmin-cache/${date}-${key}.json`);
-}
-
-function shiftDate(iso: string, days: number): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  const dt = new Date(y, m - 1, d + days);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-}
-
-function dateRange(startIso: string, endIso: string): string[] {
-  const dates: string[] = [];
-  const [sy, sm, sd] = startIso.split("-").map(Number);
-  const [ey, em, ed] = endIso.split("-").map(Number);
-  const end = new Date(ey, em - 1, ed);
-  for (const d = new Date(sy, sm - 1, sd); d <= end; d.setDate(d.getDate() + 1)) {
-    dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
-  }
-  return dates;
-}
-
-function avg(arr: (number | null | undefined)[]): number | null {
-  const v = arr.filter((x): x is number => x != null && !isNaN(x));
-  return v.length ? Math.round((v.reduce((a, b) => a + b, 0) / v.length) * 10) / 10 : null;
-}
-
-function sum(arr: (number | null | undefined)[]): number {
-  return arr.filter((x): x is number => x != null && !isNaN(x)).reduce((a, b) => a + b, 0);
-}
-
-function aggregateFood(entries: DbEntry[], dates: string[]) {
-  const ds = new Set(dates);
-  const acc: Record<string, { calories: number; protein: number; carbs: number; fat: number }> = {};
-  for (const e of entries) {
-    if (!ds.has(e.date) || !e.customFood) continue;
-    if (!acc[e.date]) acc[e.date] = { calories: 0, protein: 0, carbs: 0, fat: 0 };
-    acc[e.date].calories += e.customFood.calories * e.quantity;
-    acc[e.date].protein  += e.customFood.protein  * e.quantity;
-    acc[e.date].carbs    += e.customFood.carbs    * e.quantity;
-    acc[e.date].fat      += e.customFood.fat      * e.quantity;
-  }
-  return acc;
-}
-
-interface DaySnapshot {
-  date: string;
-  food: { calories: number; protein: number; carbs: number; fat: number } | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  daily: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sleep: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  hrv: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  activities: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  stress: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  bodybattery: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  spo2: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  trainingstatus: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  bloodpressure: any;
-}
-
-async function buildSnapshots(dates: string[], allEntries: DbEntry[]): Promise<DaySnapshot[]> {
-  const food = aggregateFood(allEntries, dates);
-  return Promise.all(
-    dates.map(async (d) => {
-      const [daily, sleep, hrv, activities, stress, bodybattery, spo2, trainingstatus, bloodpressure] = await Promise.all([
-        readGarminCache(d, "daily"),
-        readGarminCache(d, "sleep"),
-        readGarminCache(d, "hrv"),
-        readGarminCache<unknown[]>(d, "activities"),
-        readGarminCache(d, "stress"),
-        readGarminCache(d, "bodybattery"),
-        readGarminCache(d, "spo2"),
-        readGarminCache(d, "trainingstatus"),
-        readGarminCache(d, "bloodpressure"),
-      ]);
-      return {
-        date: d,
-        food: food[d] ?? null,
-        daily,
-        sleep,
-        hrv,
-        activities: activities ?? [],
-        stress,
-        bodybattery,
-        spo2,
-        trainingstatus,
-        bloodpressure,
-      };
-    })
-  );
-}
-
-function summarizePeriod(snaps: DaySnapshot[]) {
-  const foodDays  = snaps.filter((s) => s.food);
-  const sleepDays = snaps.filter((s) => s.sleep?.totalSleepSeconds);
-  const stepDays  = snaps.filter((s) => s.daily?.steps);
-  const allActs   = snaps.flatMap((s) => s.activities ?? []);
-  const actsWithLoad = allActs.filter((a) => a.trainingLoad != null);
-  return {
-    daysLogged:          foodDays.length,
-    totalDays:           snaps.length,
-    avgCalories:         avg(foodDays.map((s) => s.food!.calories)),
-    avgProtein:          avg(foodDays.map((s) => s.food!.protein)),
-    avgCarbs:            avg(foodDays.map((s) => s.food!.carbs)),
-    avgFat:              avg(foodDays.map((s) => s.food!.fat)),
-    avgSleepHours:       avg(sleepDays.map((s) => +(s.sleep.totalSleepSeconds / 3600).toFixed(1))),
-    avgSleepScore:       avg(sleepDays.map((s) => s.sleep.sleepScore)),
-    avgDeepMin:          avg(sleepDays.map((s) => Math.round(s.sleep.deepSleepSeconds / 60))),
-    avgRemMin:           avg(sleepDays.map((s) => Math.round(s.sleep.remSleepSeconds / 60))),
-    avgHRV:              avg(snaps.map((s) => s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv)),
-    avgSteps:            avg(stepDays.map((s) => s.daily.steps)),
-    avgDistKm:           avg(stepDays.map((s) => +(s.daily.distanceMeters / 1000).toFixed(2))),
-    totalDistKm:         +(sum(snaps.map((s) => s.daily?.distanceMeters ?? 0)) / 1000).toFixed(1),
-    totalModMin:         sum(snaps.map((s) => s.daily?.moderateIntensityMinutes ?? 0)),
-    totalVigMin:         sum(snaps.map((s) => s.daily?.vigorousIntensityMinutes ?? 0)),
-    totalActiveCal:      sum(snaps.map((s) => s.daily?.activeCalories)),
-    avgStress:           avg(snaps.map((s) => s.stress?.avgStress ?? s.daily?.avgStressLevel)),
-    avgRestingHR:        avg(snaps.map((s) => s.daily?.restingHeartRate)),
-    avgSpo2:             avg(snaps.map((s) => s.spo2?.average ?? s.daily?.avgSpo2)),
-    avgSystolic:         avg(snaps.map((s) => s.bloodpressure?.avgSystolic)),
-    avgDiastolic:        avg(snaps.map((s) => s.bloodpressure?.avgDiastolic)),
-    avgBatteryHigh:      avg(snaps.map((s) => s.bodybattery?.highest)),
-    avgBatteryLow:       avg(snaps.map((s) => s.bodybattery?.lowest)),
-    avgBatteryCharged:   avg(snaps.map((s) => s.bodybattery?.charged ?? s.daily?.bodyBatteryCharged)),
-    avgBatteryDrained:   avg(snaps.map((s) => s.bodybattery?.drained ?? s.daily?.bodyBatteryDrained)),
-    workouts:            allActs.length,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    workoutTypes:        [...new Set(allActs.map((a: any) => a.activityType ?? ""))].filter(Boolean).slice(0, 6).join(", "),
-    totalTrainingLoad:   actsWithLoad.length ? Math.round(sum(actsWithLoad.map((a) => a.trainingLoad))) : null,
-    prCount:             allActs.filter((a) => a.pr).length,
-  };
-}
-
-// ── Gemini structured output ──────────────────────────────────────────────────
-
-const sectionSchema = (extra: Record<string, unknown>) => ({
-  type: "OBJECT",
-  properties: {
-    score: { type: "INTEGER" },
-    headline: { type: "STRING" },
-    summary: { type: "STRING" },
-    ...extra,
-  },
-  required: ["score", "headline", "summary"],
-});
-
-const RESPONSE_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    biologicalAge: {
-      type: "OBJECT",
-      properties: {
-        estimate: { type: "INTEGER" },
-        delta: { type: "INTEGER" },
-        confidence: { type: "STRING", enum: ["high", "medium", "low"] },
-        keyFactors: { type: "ARRAY", items: { type: "STRING" } },
-        topImprovement: { type: "STRING" },
-      },
-      required: ["estimate", "delta", "confidence", "keyFactors", "topImprovement"],
-    },
-    today: sectionSchema({
-      highlights: { type: "ARRAY", items: { type: "STRING" } },
-      concerns: { type: "ARRAY", items: { type: "STRING" } },
-    }),
-    week: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
-    month: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
-    supplements: {
-      type: "OBJECT",
-      properties: {
-        stackAssessment: { type: "STRING" },
-        adherenceInsight: { type: "STRING" },
-        gaps: { type: "ARRAY", items: { type: "STRING" } },
-        timing: { type: "ARRAY", items: { type: "STRING" } },
-        interactions: { type: "ARRAY", items: { type: "STRING" } },
-      },
-      required: ["stackAssessment", "adherenceInsight", "gaps", "timing", "interactions"],
-    },
-    recommendations: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          priority: { type: "STRING", enum: ["high", "medium", "low"] },
-          category: { type: "STRING", enum: ["nutrition", "sleep", "exercise", "recovery", "supplements", "stress", "hydration"] },
-          text: { type: "STRING" },
-        },
-        required: ["priority", "category", "text"],
-      },
-    },
-  },
-  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
-};
-
-// Primary model, one retry on transient errors, then a lighter fallback model
-const GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < GEMINI_MODELS.length; attempt++) {
-    if (attempt > 0) await wait(1500 * attempt);
-    let resp: Response;
-    try {
-      resp = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODELS[attempt]}:generateContent?key=${apiKey}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              responseSchema: RESPONSE_SCHEMA,
-              // Low temperature keeps scores and bio-age stable between runs on identical data
-              temperature: 0.2,
-            },
-          }),
-        }
-      );
-    } catch (e) {
-      lastError = e instanceof Error ? e : new Error(String(e));
-      continue; // network error — retry
-    }
-    if (!resp.ok) {
-      const body = await resp.text();
-      lastError = new Error(`Gemini ${resp.status}: ${body.slice(0, 300)}`);
-      if (RETRYABLE_STATUS.has(resp.status)) continue;
-      throw lastError; // 4xx client errors won't fix themselves
-    }
-    const json = await resp.json();
-    const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) { lastError = new Error("Empty Gemini response"); continue; }
-    try {
-      return JSON.parse(text);
-    } catch {
-      lastError = new Error("Gemini returned invalid JSON");
-      continue;
-    }
-  }
-  throw lastError ?? new Error("Gemini call failed");
-}
-
-// ── Claude (Anthropic) — primary summary provider ─────────────────────────────
-// Standard JSON Schema (lowercase types, additionalProperties:false everywhere) —
-// Claude's structured-output format differs from Gemini's uppercase responseSchema.
-
-const claudeSection = (extra: Record<string, unknown>) => ({
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    score: { type: "integer" },
-    headline: { type: "string" },
-    summary: { type: "string" },
-    ...extra,
-  },
-  required: ["score", "headline", "summary", ...Object.keys(extra)],
-});
-
-const strArray = { type: "array", items: { type: "string" } };
-
-const CLAUDE_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    biologicalAge: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        estimate: { type: "integer" },
-        delta: { type: "integer" },
-        confidence: { type: "string", enum: ["high", "medium", "low"] },
-        keyFactors: strArray,
-        topImprovement: { type: "string" },
-      },
-      required: ["estimate", "delta", "confidence", "keyFactors", "topImprovement"],
-    },
-    today: claudeSection({ highlights: strArray, concerns: strArray }),
-    week: claudeSection({ trends: strArray }),
-    month: claudeSection({ trends: strArray }),
-    supplements: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        stackAssessment: { type: "string" },
-        adherenceInsight: { type: "string" },
-        gaps: strArray,
-        timing: strArray,
-        interactions: strArray,
-      },
-      required: ["stackAssessment", "adherenceInsight", "gaps", "timing", "interactions"],
-    },
-    recommendations: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          priority: { type: "string", enum: ["high", "medium", "low"] },
-          category: { type: "string", enum: ["nutrition", "sleep", "exercise", "recovery", "supplements", "stress", "hydration"] },
-          text: { type: "string" },
-        },
-        required: ["priority", "category", "text"],
-      },
-    },
-  },
-  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
-};
-
-// Opus-tier reasoning is the point of using Claude here; override via env if desired.
-const CLAUDE_SUMMARY_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-opus-4-8";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callClaudeJSON(prompt: string, apiKey: string): Promise<any> {
-  const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
-  const stream = client.messages.stream({
-    model: CLAUDE_SUMMARY_MODEL,
-    max_tokens: 16000,
-    // Adaptive thinking sharpens the bio-age/score reasoning; structured output keeps
-    // the final block valid JSON. Streaming avoids HTTP timeouts at this max_tokens.
-    thinking: { type: "adaptive" },
-    output_config: { format: { type: "json_schema", schema: CLAUDE_SCHEMA } },
-    messages: [{ role: "user", content: prompt }],
-  });
-  const msg = await stream.finalMessage();
-  if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
-  const text = msg.content
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .filter((b: any) => b.type === "text")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((b: any) => b.text)
-    .join("");
-  if (!text) throw new Error("Empty Claude response");
-  return JSON.parse(text);
-}
-
-// Provider dispatch: Claude primary (best reasoning), Gemini as automatic fallback
-// so a missing/failing Anthropic key never takes the summary down.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function generateSummary(prompt: string): Promise<any> {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (anthropicKey) {
-    try {
-      return await callClaudeJSON(prompt, anthropicKey);
-    } catch (e) {
-      if (!geminiKey) throw e;
-      console.warn("Claude summary failed, falling back to Gemini:", e instanceof Error ? e.message : e);
-    }
-  }
-  if (geminiKey) return callGeminiJSON(prompt, geminiKey);
-  throw new Error("No AI provider configured");
-}
+import { generateSummary } from "@/lib/summary/providers";
+import { SUMMARY_SYSTEM_PROMPT } from "@/lib/summary/prompt";
+import { readGarminCache, shiftDate, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
 
 // ── summary cache ─────────────────────────────────────────────────────────────
 
@@ -417,7 +55,7 @@ export async function POST(req: Request) {
     night:     "Night (11 pm–5 am) — rest period; focus on sleep quality and tomorrow prep",
   };
 
-  // Change-based invalidation: a cached summary stays valid until the data Gemini
+  // Change-based invalidation: a cached summary stays valid until the data the model
   // would see actually changes (hash comparison further down, after data loads).
   // A very fresh cache (< 15 min) is served immediately without loading anything.
   const cached = force ? null : await readSummaryCache(date, bracket);
@@ -433,10 +71,8 @@ export async function POST(req: Request) {
   const weekDates  = dateRange(week7Start, today);
   const monDates   = dateRange(mon30Start, today);
 
-  // getLogForDate reads and conditionally writes the same blob as getAllSupplements —
-  // run it first to avoid a concurrent-write race on the supplements blob.
-  const suppLog = await getLogForDate(today);
-  const [allEntries, profile, supplements, weightRows] = await Promise.all([
+  const [suppLog, allEntries, profile, supplements, weightRows] = await Promise.all([
+    getLogForDate(today), // pure read — virtual backfill, never writes
     getAllEntries(),
     loadProfile(),
     getAllSupplements(),
@@ -471,7 +107,7 @@ export async function POST(req: Request) {
   const monFirstSum   = summarizePeriod(monSnaps.slice(0, 15));
   const monSecondSum  = summarizePeriod(monSnaps.slice(15));
 
-  // Regenerate only when the data Gemini would see has actually changed since the
+  // Regenerate only when the data the model would see has actually changed since the
   // cached summary was generated (syncedAt timestamps excluded — they change on
   // every sync even when the values don't)
   const dataHash = createHash("sha256").update(JSON.stringify(
@@ -482,7 +118,7 @@ export async function POST(req: Request) {
     return serveCached(cached);
   }
 
-  // Previous analysis (any date/bracket) — anchors scores/bio-age and lets Gemini
+  // Previous analysis (any date/bracket) — anchors scores/bio-age and lets the model
   // follow up on its own earlier recommendations like a coach with memory
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const latest = await readJson<{ generatedAt: string; date: string; data: any }>("summary-cache/latest.json");
@@ -528,11 +164,11 @@ export async function POST(req: Request) {
   const bpAvg = (s: { avgSystolic: number | null; avgDiastolic: number | null }) =>
     s.avgSystolic != null && s.avgDiastolic != null ? `${s.avgSystolic}/${s.avgDiastolic} mmHg` : "no data";
 
-  // Precomputed deltas — Gemini comments on trends far better than it computes them
+  // Precomputed deltas — the model comments on trends far better than it computes them
   const delta = (cur: number | null, prev: number | null, unit = "") =>
     cur != null && prev != null ? `${cur - prev >= 0 ? "+" : ""}${+(cur - prev).toFixed(1)}${unit}` : "n/a";
 
-  // Per-day series for the last 7 days — lets Gemini spot patterns averages erase
+  // Per-day series for the last 7 days — lets the model spot patterns averages erase
   const dayRows = weekSnaps.map((s) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const acts = (s.activities ?? []).map((a: any) =>
@@ -563,18 +199,18 @@ ${// eslint-disable-next-line @typescript-eslint/no-explicit-any
       (bpReadings.length > 1 ? ` | day avg: ${d.bloodpressure.avgSystolic}/${d.bloodpressure.avgDiastolic} mmHg over ${bpReadings.length} readings` : "")
     : "no data";
 
-  // ── Build prompt ──────────────────────────────────────────────────────────
+  // ── Build the user prompt — DATA ONLY ─────────────────────────────────────
+  // The persona, output JSON template, and scoring rules live in the static system
+  // prompt (SUMMARY_SYSTEM_PROMPT) so the provider prompt cache can reuse them;
+  // everything below varies per request.
 
-  const prompt = `You are an expert personal health coach and sports nutritionist with access to comprehensive biometric, nutrition, and activity data. Analyze everything below and provide a thorough, data-driven, personalized assessment.
-
-## CURRENT TIME
-Local time: ${timeStr} | ${bracketLabel[bracket]} | Day ~${dayPct}% complete
-Tailor ALL recommendations to what is still actionable right now. Do not recommend things that are past (e.g. no "eat breakfast" at 8 pm). Today's partial metrics (steps, calories, supplements) reflect only what has happened so far — interpret them in context of time remaining.
+  const prompt = `## CURRENT TIME
+Local time: ${timeStr} | ${bracketLabel[bracket]} | Day ~${dayPct}% complete | Bracket: ${bracket}
 
 ## USER PROFILE
 ${profile
   ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg
-BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : ""}`
+BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : "\nHealth goal: not specified"}`
   : "Not configured — base analysis on Garmin data only"}
 
 ## FITNESS METRICS (Garmin account-level)
@@ -700,78 +336,12 @@ Activity:
 
 Weight trend: ${weightChange != null
   ? `${weightChange > 0 ? "+" : ""}${weightChange} kg over 30 days (${monWeights[0]?.weightKg} kg → ${monWeights[monWeights.length - 1]?.weightKg} kg)`
-  : "no weight data"}
-
----
-
-Return a JSON object with EXACTLY this structure (no markdown, no extra text):
-{
-  "biologicalAge": {
-    "estimate": <integer — your best estimate of biological age in years, based on all available biomarkers>,
-    "delta": <integer — estimate minus chronological age; negative means biologically younger>,
-    "confidence": "high|medium|low",
-    "keyFactors": ["<biomarker or behavior that most influences this estimate — cite the actual value, e.g. 'VO2 max 42 ml/kg/min is excellent for age 49'>"],
-    "topImprovement": "<single most impactful action this user can take to lower biological age — be specific and cite a metric>"
-  },
-  "today": {
-    "score": <integer 1–10>,
-    "headline": "<single punchy sentence summarizing today>",
-    "summary": "<2–3 sentence narrative citing specific numbers from the data above>",
-    "highlights": ["<what went well — cite a metric>"],
-    "concerns": ["<gap or concern — cite a metric — empty array if none>"]
-  },
-  "week": {
-    "score": <integer 1–10>,
-    "headline": "<single sentence summarizing the week>",
-    "summary": "<2–3 sentence narrative citing specific numbers>",
-    "trends": ["<trend 1 — cite numbers>", "<trend 2>", "<trend 3>"]
-  },
-  "month": {
-    "score": <integer 1–10>,
-    "headline": "<single sentence summarizing the month>",
-    "summary": "<2–3 sentence narrative citing specific numbers>",
-    "trends": ["<trend 1>", "<trend 2>", "<trend 3>"]
-  },
-  "supplements": {
-    "stackAssessment": "<2–3 sentences evaluating the stack for this user's age, sex, weight, activity level, BMR/TDEE, VO2 max, and key metrics (HRV, sleep score, stress, resting HR). Reference at least 3 specific numbers.>",
-    "adherenceInsight": "<1–2 sentences on adherence — note inconsistently taken supplements and any correlation with metric dips>",
-    "gaps": ["<missing supplement grounded in a specific data signal — e.g. 'Magnesium glycinate 400mg: avg stress 65/100 + 6.1h sleep warrants evening magnesium' — cite the metric, never generic>"],
-    "timing": ["<timing tip for a supplement actually in their stack, referencing their fat intake, meal patterns, or Garmin workout times>"],
-    "interactions": ["<real synergy or conflict between their existing supplements — empty array if none>"]
-  },
-  "recommendations": [
-    { "priority": "high|medium|low", "category": "nutrition|sleep|exercise|recovery|supplements|stress|hydration", "text": "<specific and actionable — cite exact numbers and targets from the data>" }
-  ]
-}
-
-Scoring rules:
-- 10 = all metrics optimal; weight sleep quality, HRV, nutrition adherence, recovery, and training load balance
-- User's stated health goal: "${profile?.goal ?? "not specified"}" — align ALL recommendations, highlights, supplement advice, AND the biologicalAge.topImprovement toward this goal
-- biologicalAge: use VO2 max, resting HR, HRV, blood pressure, sleep score/duration, body fat%, stress, and activity levels as primary biomarkers. Reference Garmin Fitness Age if available but give your own independent estimate. If data is sparse set confidence: "low"
-- highlights: 1–3 items, each citing a metric. concerns: 0–3 items, each citing a metric
-- supplements.stackAssessment MUST reference age, sex, weight, activity, and ≥3 measured metrics by number, AND evaluate each supplement's TOTAL daily dose (dose × pills) against the effective range and tolerable upper limit for this user — explicitly flag anything under- or over-dosed
-- supplements.gaps: 0–3 items; every suggestion must cite a specific data point justifying it; never suggest a nutrient already covered anywhere in the stack, including inside combo products (multivitamins, ZMA, electrolyte mixes)
-- supplements.timing: 1–3 items, only for supplements already in their stack; account for mineral absorption competition (calcium/iron/zinc/magnesium) and pair fat-soluble vitamins (D, K2, E, A, omega-3) with the user's fattiest meal
-- supplements.interactions: evidence-based interactions AND cross-product overlaps — if the same nutrient appears in multiple products, state the cumulative daily total and whether it approaches a safety limit; empty array if none
-- recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
-- Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
-- If Garmin data is missing for a period, say so and base the score on what is available
-- CONTINUITY: keep scores and the biologicalAge estimate consistent with the PREVIOUS ANALYSIS above (if present) — only move a score or the bio-age when a specific metric changed, and cite that metric as the reason
-- FOLLOW-UP: compare the previous recommendations against the current data — explicitly acknowledge progress or regression on at least one of them (in highlights, concerns, or a recommendation), e.g. "last time you were advised X — the data now shows Y"
-- Use the precomputed "Vs prior week" and "Momentum" deltas as the primary basis for the week/month trends — cite the delta values directly instead of inferring trends from single averages
-- Use the "Daily breakdown" table to spot day-level patterns (e.g. sleep dips after evening workouts, weekend nutrition gaps) and mention any clear one in the week summary or trends
-- TIME-AWARE recommendations (current bracket: ${bracket}):${
-  bracket === "morning"   ? " prioritise what to do TODAY — meal plan, workout timing, which supplements to take first, energy management" :
-  bracket === "afternoon" ? " focus on mid-day course corrections — are macros/calories on track, were morning supplements taken, afternoon energy dip strategies" :
-  bracket === "evening"   ? " focus on wind-down — evening supplements, final nutrition close-out, sleep hygiene, tomorrow prep" :
-                            " focus on sleep quality and recovery — overnight supplements, relaxation, readiness for tomorrow"
-}
-- Never suggest actions that are clearly past (no 'eat breakfast' at 9 pm, no 'morning run' at 11 pm)`;
+  : "no weight data"}`;
 
   try {
-    const result = await generateSummary(prompt);
+    const result = await generateSummary(SUMMARY_SYSTEM_PROMPT, prompt);
 
-    // Deterministic data-coverage info for the UI — not entrusted to Gemini
+    // Deterministic data-coverage info for the UI — not entrusted to the model
     result.dataCompleteness = {
       days:  weekSnaps.length,
       food:  weekSnaps.filter((s) => s.food).length,

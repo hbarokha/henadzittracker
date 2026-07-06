@@ -23,7 +23,7 @@
   --text:         #E8DDD4;
   --text-sec:     #B0A090;
   --text-muted:   #8A7A6E;
-  --text-dim:     #5C5248;
+  --text-dim:     #6B6055;  /* lifted from #5C5248 — was below readable contrast on --bg */
 
   /* Accents */
   --amber:        #F5A623;

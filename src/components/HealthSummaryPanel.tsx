@@ -50,6 +50,7 @@ interface HealthSummary {
   supplements?: SupplementAnalysis;
   recommendations: Recommendation[];
   dataCompleteness?: DataCompleteness;
+  provider?: string;   // "Claude" (primary) or "Gemini" (fallback) — reported by the server
   cached?: boolean;
   cachedAt?: string;
 }
@@ -397,7 +398,7 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
               {loading
                 ? (!ready ? "Waiting for Garmin data…" : onSyncGarmin ? "Syncing Garmin then analyzing…" : "Analyzing your data…")
-                : "Powered by Gemini · all data combined"}
+                : `Powered by ${summary?.provider ?? "AI"} · all data combined`}
             </p>
           </div>
         </div>

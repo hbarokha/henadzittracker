@@ -1,129 +1,32 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import type { Supplement, SupplementLog as SLog, SupplementUnit, TimeOfDay } from "@/lib/supplements";
-import CameraModal from "./CameraModal";
-
-declare class BarcodeDetector {
-  constructor(options?: { formats: string[] });
-  detect(source: HTMLVideoElement | HTMLCanvasElement | ImageBitmap): Promise<Array<{ rawValue: string }>>;
-  static getSupportedFormats(): Promise<string[]>;
-}
-
-const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf"];
+import SupplementAddPanel from "./supplements/SupplementAddPanel";
+import {
+  type AISuggestion,
+  TIME_ORDER, VALID_TOD, TIME_LABELS, TIME_ICONS, TIME_CSS_COLORS,
+  InfoBadge, TipBadge, SuggestionCard, postSupplement,
+} from "./supplements/shared";
 
 interface SupplementWithLog extends Supplement {
   taken: boolean;
 }
 
-interface AISuggestion {
-  name: string;
-  brand?: string;
-  dose: number;
-  unit: SupplementUnit;
-  timeOfDay: TimeOfDay;
-  description: string;
-  usageTip: string;
-  reason: string;
-}
-
-const TIME_ORDER: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
-const VALID_TOD = new Set<string>(TIME_ORDER);
-const TIME_LABELS: Record<TimeOfDay, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", any: "Anytime" };
-const TIME_ICONS: Record<TimeOfDay, string> = { morning: "🌅", afternoon: "☀️", evening: "🌙", any: "⏰" };
-const TIME_COLORS: Record<TimeOfDay, string> = { morning: "text-amber-400", afternoon: "text-sky-400", evening: "text-violet-400", any: "text-gray-400" };
-const TIME_BG: Record<TimeOfDay, string> = { morning: "bg-amber-500/10", afternoon: "bg-sky-500/10", evening: "bg-violet-500/10", any: "bg-gray-700/30" };
-const TIME_CSS_COLORS: Record<TimeOfDay, string> = { morning: "#fbbf24", afternoon: "#38bdf8", evening: "#a78bfa", any: "var(--text-dim)" };
-
-type AddTab = "manual" | "describe" | "photo" | "barcode";
-
 interface Props { date: string }
-
-// ── tiny sub-components ───────────────────────────────────────────────────────
-
-function InfoBadge({ text }: { text: string }) {
-  return (
-    <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2"
-      style={{ color: "var(--text-muted)", background: "var(--bg-raised)" }}>
-      <span className="flex-shrink-0 mt-0.5">ℹ️</span>
-      <span className="leading-relaxed">{text}</span>
-    </div>
-  );
-}
-
-function TipBadge({ text }: { text: string }) {
-  return (
-    <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2"
-      style={{ color: "#fbbf24", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.15)" }}>
-      <span className="flex-shrink-0 mt-0.5">💡</span>
-      <span className="leading-relaxed">{text}</span>
-    </div>
-  );
-}
-
-function SuggestionCard({ s, onAdd, adding }: {
-  s: AISuggestion; onAdd: (s: AISuggestion) => void; adding: boolean;
-}) {
-  return (
-    <div className="rounded-xl p-4 space-y-3"
-      style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>{s.name}</p>
-          {s.brand && <p className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{s.brand}</p>}
-          <p className="text-xs" style={{ color: "var(--text-dim)" }}>{s.dose} {s.unit} · {TIME_ICONS[s.timeOfDay]} {TIME_LABELS[s.timeOfDay]}</p>
-        </div>
-        <button onClick={() => onAdd(s)} disabled={adding}
-          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
-          style={{ background: "rgba(52,211,153,0.15)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
-          {adding ? "…" : "+ Add"}
-        </button>
-      </div>
-      {s.reason && (
-        <p className="text-xs italic" style={{ color: "#38bdf8", opacity: 0.85 }}>"{s.reason}"</p>
-      )}
-      {s.description && <InfoBadge text={s.description} />}
-      {s.usageTip && <TipBadge text={s.usageTip} />}
-    </div>
-  );
-}
-
-// ── main component ────────────────────────────────────────────────────────────
 
 export default function SupplementLog({ date }: Props) {
   const [items, setItems] = useState<SupplementWithLog[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingSupps, setLoadingSupps] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const [addTab, setAddTab] = useState<AddTab>("manual");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showRecs, setShowRecs] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Retake
   const [retakeId, setRetakeId] = useState<string | null>(null);
   const [retakeTime, setRetakeTime] = useState<TimeOfDay>("morning");
-
-  // Manual form
-  const [manualForm, setManualForm] = useState({
-    name: "", brand: "", dose: "", unit: "mg" as SupplementUnit, pills: "1", timeOfDay: "morning" as TimeOfDay,
-  });
-
-  // AI describe tab
-  const [descPrompt, setDescPrompt] = useState("");
-  const [descLoading, setDescLoading] = useState(false);
-  const [descSuggestions, setDescSuggestions] = useState<AISuggestion[]>([]);
-  const [descError, setDescError] = useState<string | null>(null);
-
-  // AI photo tab
-  const photoRef = useRef<HTMLInputElement>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
-  const [photoMime, setPhotoMime] = useState<string>("image/jpeg");
-  const [photoLoading, setPhotoLoading] = useState(false);
-  const [photoSuggestions, setPhotoSuggestions] = useState<AISuggestion[]>([]);
-  const [photoError, setPhotoError] = useState<string | null>(null);
-  const [showCamera, setShowCamera] = useState(false);
-  const hasCam = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
   // Recommendations
   const [recsLoading, setRecsLoading] = useState(false);
@@ -135,27 +38,10 @@ export default function SupplementLog({ date }: Props) {
   const [tipsLoading, setTipsLoading] = useState(false);
   const [tipsError, setTipsError] = useState<string | null>(null);
 
-  const [saving, setSaving] = useState(false);
-
   // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
   const [editSaving, setEditSaving] = useState(false);
-
-  // Barcode tab
-  const bcVideoRef = useRef<HTMLVideoElement>(null);
-  const bcStreamRef = useRef<MediaStream | null>(null);
-  const bcRafRef = useRef<number>(0);
-  const bcDetectorRef = useRef<BarcodeDetector | null>(null);
-  const [bcPhase, setBcPhase] = useState<"idle" | "scanning" | "loading" | "result" | "error">("idle");
-  const [bcManInput, setBcManInput] = useState("");
-  const [bcScanHint, setBcScanHint] = useState("Point camera at barcode");
-  const [bcError, setBcError] = useState<string | null>(null);
-  const [bcConfirm, setBcConfirm] = useState<{
-    name: string; dose: string; unit: SupplementUnit; pills: string; brand: string | null; image: string | null;
-  } | null>(null);
-  const [bcTimeOfDay, setBcTimeOfDay] = useState<TimeOfDay>("morning");
-  const hasBarcodeDetector = typeof window !== "undefined" && "BarcodeDetector" in window;
 
   // ── data loading ───────────────────────────────────────────────────────────
 
@@ -181,116 +67,6 @@ export default function SupplementLog({ date }: Props) {
 
   useEffect(() => { load(); }, [date]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── barcode helpers ────────────────────────────────────────────────────────
-
-  const bcStopCamera = useCallback(() => {
-    cancelAnimationFrame(bcRafRef.current);
-    bcStreamRef.current?.getTracks().forEach(t => t.stop());
-    bcStreamRef.current = null;
-  }, []);
-
-  useEffect(() => () => bcStopCamera(), [bcStopCamera]);
-
-  async function bcLookup(barcode: string) {
-    setBcPhase("loading");
-    setBcError(null);
-    bcStopCamera();
-    try {
-      const res = await fetch(`/api/ai/barcode?supplement=1&barcode=${encodeURIComponent(barcode)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Lookup failed");
-      setBcConfirm({
-        name: data.supplement.name ?? "",
-        dose: data.supplement.dose != null ? String(data.supplement.dose) : "",
-        unit: (data.supplement.unit ?? "mg") as SupplementUnit,
-        pills: "1",
-        brand: data.meta.brand,
-        image: data.meta.image,
-      });
-      setBcTimeOfDay("morning");
-      setBcPhase("result");
-    } catch (err) {
-      setBcError(err instanceof Error ? err.message : "Something went wrong");
-      setBcPhase("error");
-    }
-  }
-
-  async function bcStartCamera() {
-    setBcError(null);
-    setBcScanHint("Point camera at barcode");
-    setBcPhase("scanning");
-    let stream: MediaStream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-    } catch {
-      setBcError("Camera access denied. Use manual entry instead.");
-      setBcPhase("error");
-      return;
-    }
-    bcStreamRef.current = stream;
-    if (bcVideoRef.current) {
-      bcVideoRef.current.srcObject = stream;
-      await bcVideoRef.current.play();
-    }
-    if (!bcDetectorRef.current) {
-      try {
-        const supported = await BarcodeDetector.getSupportedFormats();
-        const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
-        bcDetectorRef.current = new BarcodeDetector({ formats: formats.length ? formats : BARCODE_FORMATS });
-      } catch {
-        bcDetectorRef.current = new BarcodeDetector({ formats: BARCODE_FORMATS });
-      }
-    }
-    let frameCount = 0;
-    async function detectLoop() {
-      if (!bcVideoRef.current || !bcDetectorRef.current || !bcStreamRef.current) return;
-      frameCount++;
-      if (frameCount % 10 === 0) {
-        try {
-          const codes = await bcDetectorRef.current.detect(bcVideoRef.current);
-          if (codes.length > 0) {
-            setBcScanHint(`Found: ${codes[0].rawValue}`);
-            await bcLookup(codes[0].rawValue);
-            return;
-          }
-        } catch { /* frame not ready */ }
-      }
-      bcRafRef.current = requestAnimationFrame(detectLoop);
-    }
-    bcRafRef.current = requestAnimationFrame(detectLoop);
-  }
-
-  function bcReset() {
-    bcStopCamera();
-    setBcPhase("idle");
-    setBcError(null);
-    setBcConfirm(null);
-    setBcManInput("");
-  }
-
-  async function bcAdd() {
-    if (!bcConfirm || !bcConfirm.name.trim() || !bcConfirm.dose) return;
-    setSaving(true);
-    await fetch("/api/supplements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: bcConfirm.name.trim(),
-        brand: bcConfirm.brand?.trim() || undefined,
-        dose: Number(bcConfirm.dose),
-        unit: bcConfirm.unit,
-        pills: Number(bcConfirm.pills) || 1,
-        timeOfDay: bcTimeOfDay,
-      }),
-    });
-    setSaving(false);
-    bcReset();
-    setShowAdd(false);
-    await load();
-  }
-
   // ── actions ────────────────────────────────────────────────────────────────
 
   async function toggle(id: string, taken: boolean) {
@@ -302,64 +78,38 @@ export default function SupplementLog({ date }: Props) {
     });
   }
 
-  async function saveManual() {
-    if (!manualForm.name.trim() || !manualForm.dose) return;
-    setSaving(true);
-    await fetch("/api/supplements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: manualForm.name, brand: manualForm.brand || undefined, dose: Number(manualForm.dose), unit: manualForm.unit, pills: Number(manualForm.pills) || 1, timeOfDay: manualForm.timeOfDay }),
-    });
-    setManualForm({ name: "", brand: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
-    setShowAdd(false);
-    setSaving(false);
-    await load();
-  }
-
+  // Add a recommendation to the stack (the add panel handles its own suggestions).
   async function saveSuggestion(s: AISuggestion) {
     if (!s.name?.trim() || !s.dose) return;
     const key = `${s.name}-${s.dose}`;
     setAddingId(key);
-    await fetch("/api/supplements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
-        description: s.description, usageTip: s.usageTip,
-      }),
+    await postSupplement({
+      name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
+      description: s.description, usageTip: s.usageTip,
     });
     setAddingId(null);
-    setShowAdd(false);
-    setDescSuggestions([]);
-    setPhotoSuggestions([]);
-    setPhotoPreview(null);
-    setPhotoBase64(null);
-    setDescPrompt("");
     setRecommendations((prev) => prev.filter((r) => r.name !== s.name));
     await load();
   }
 
   async function remove(id: string) {
-    await fetch(`/api/supplements/${id}`, { method: "DELETE" });
+    setItems((prev) => prev.filter((s) => s.id !== id)); // optimistic — feels instant
+    await fetch(`/api/supplements/${id}?date=${date}`, { method: "DELETE" });
     await load();
   }
 
   async function doRetake(s: SupplementWithLog) {
     if (!s.name?.trim() || !s.dose) return;
     setSaving(true);
-    await fetch("/api/supplements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: s.name,
-        brand: s.brand || undefined,
-        dose: s.dose,
-        unit: s.unit,
-        pills: s.pills,
-        timeOfDay: retakeTime,
-        description: s.description,
-        usageTip: s.usageTip,
-      }),
+    await postSupplement({
+      name: s.name,
+      brand: s.brand || undefined,
+      dose: s.dose,
+      unit: s.unit,
+      pills: s.pills,
+      timeOfDay: retakeTime,
+      description: s.description,
+      usageTip: s.usageTip,
     });
     setSaving(false);
     setRetakeId(null);
@@ -391,71 +141,6 @@ export default function SupplementLog({ date }: Props) {
     setEditSaving(false);
     setEditingId(null);
     await load();
-  }
-
-  // ── AI: describe ───────────────────────────────────────────────────────────
-
-  async function runDescribe() {
-    if (!descPrompt.trim()) return;
-    setDescLoading(true);
-    setDescError(null);
-    setDescSuggestions([]);
-    try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "identify-text", prompt: descPrompt }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-      setDescSuggestions(data.supplements ?? []);
-    } catch (e) {
-      setDescError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDescLoading(false);
-    }
-  }
-
-  // ── AI: photo ──────────────────────────────────────────────────────────────
-
-  function loadPhotoFile(file: File) {
-    setPhotoMime(file.type || "image/jpeg");
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const result = ev.target?.result as string;
-      setPhotoPreview(result);
-      setPhotoBase64(result.split(",")[1]);
-    };
-    reader.readAsDataURL(file);
-    setPhotoSuggestions([]);
-    setPhotoError(null);
-  }
-
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    loadPhotoFile(file);
-  }
-
-  async function runPhotoAnalysis() {
-    if (!photoBase64) return;
-    setPhotoLoading(true);
-    setPhotoError(null);
-    setPhotoSuggestions([]);
-    try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "identify-image", base64: photoBase64, mimeType: photoMime }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-      setPhotoSuggestions(data.supplements ?? []);
-    } catch (e) {
-      setPhotoError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPhotoLoading(false);
-    }
   }
 
   // ── AI: generate tips ─────────────────────────────────────────────────────
@@ -520,19 +205,6 @@ export default function SupplementLog({ date }: Props) {
 
   const takenCount = items.filter((i) => i.taken).length;
 
-  const resetAdd = () => {
-    setShowAdd(false);
-    setDescPrompt("");
-    setDescSuggestions([]);
-    setDescError(null);
-    setPhotoPreview(null);
-    setPhotoBase64(null);
-    setPhotoSuggestions([]);
-    setPhotoError(null);
-    setManualForm({ name: "", brand: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
-    bcReset();
-  };
-
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -584,10 +256,11 @@ export default function SupplementLog({ date }: Props) {
             Suggest
           </button>
           <button
-            onClick={() => { setShowAdd((v) => !v); if (showAdd) resetAdd(); }}
+            onClick={() => setShowAdd((v) => !v)}
             className="p-1.5 rounded-lg transition-colors"
             style={{ background: "var(--bg-raised)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
             title="Add supplement"
+            aria-label={showAdd ? "Close add supplement panel" : "Add supplement"}
           >
             <svg className={`w-4 h-4 transition-transform duration-200 ${showAdd ? "rotate-45" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -618,406 +291,12 @@ export default function SupplementLog({ date }: Props) {
         </div>
       )}
 
-      {/* ── Add panel ───────────────────────────────────────────────────────── */}
+      {/* ── Add panel — unmounting on close discards all panel state ─────── */}
       {showAdd && (
-        <div style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-raised)" }}>
-          {/* Tabs */}
-          <div className="flex" style={{ borderBottom: "1px solid var(--border)" }}>
-            {([
-              ["manual", "Manual"],
-              ["describe", "✨ Describe"],
-              ["photo", "📷 Photo"],
-              ["barcode", "🔲 Scan"],
-            ] as [AddTab, string][]).map(([tab, label]) => (
-              <button
-                key={tab}
-                onClick={() => setAddTab(tab)}
-                className="flex-1 py-2.5 text-xs font-semibold transition-colors relative"
-                style={{
-                  color: addTab === tab ? "#34d399" : "var(--text-dim)",
-                  fontFamily: "var(--font-display)",
-                  borderBottom: addTab === tab ? "2px solid #34d399" : "none",
-                  marginBottom: addTab === tab ? "-1px" : "0",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* Manual tab */}
-          {addTab === "manual" && (
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-3 gap-2">
-                <input
-                  value={manualForm.name}
-                  onChange={(e) => setManualForm((f) => ({ ...f, name: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && saveManual()}
-                  placeholder="Name (e.g. Vitamin D3)"
-                  className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                />
-                <input
-                  value={manualForm.brand}
-                  onChange={(e) => setManualForm((f) => ({ ...f, brand: e.target.value }))}
-                  placeholder="Brand (opt.)"
-                  className="rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                />
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <div className="space-y-1">
-                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Dose</p>
-                  <input
-                    type="number"
-                    value={manualForm.dose}
-                    onChange={(e) => setManualForm((f) => ({ ...f, dose: e.target.value }))}
-                    placeholder="500"
-                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Unit</p>
-                  <select value={manualForm.unit} onChange={(e) => setManualForm((f) => ({ ...f, unit: e.target.value as SupplementUnit }))}
-                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                    {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map((u) => <option key={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills</p>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={manualForm.pills}
-                    onChange={(e) => setManualForm((f) => ({ ...f, pills: e.target.value }))}
-                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
-                  <select value={manualForm.timeOfDay} onChange={(e) => setManualForm((f) => ({ ...f, timeOfDay: e.target.value as TimeOfDay }))}
-                    className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                    style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                    {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={resetAdd} className="flex-1 py-2 rounded-lg text-sm transition-colors"
-                  style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-                  Cancel
-                </button>
-                <button onClick={saveManual} disabled={saving || !manualForm.name.trim() || !manualForm.dose}
-                  className="flex-1 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-                  style={{ background: "rgba(52,211,153,0.15)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
-                  Add
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Describe tab */}
-          {addTab === "describe" && (
-            <div className="p-4 space-y-3">
-              <p className="text-xs" style={{ color: "var(--text-muted)" }}>Describe what you need — Gemini will suggest matching supplements.</p>
-              <textarea
-                value={descPrompt}
-                onChange={(e) => setDescPrompt(e.target.value)}
-                placeholder="e.g. something to improve sleep quality and reduce stress…"
-                rows={2}
-                className="w-full rounded-lg px-3 py-2 text-sm focus:outline-none resize-none"
-                style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-              />
-              <div className="flex gap-2">
-                <button onClick={resetAdd} className="px-4 py-2 rounded-lg text-sm transition-colors"
-                  style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-                  Cancel
-                </button>
-                <button onClick={runDescribe} disabled={descLoading || !descPrompt.trim()}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
-                  style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
-                  {descLoading ? (
-                    <>
-                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg>
-                      Searching…
-                    </>
-                  ) : "Find Supplements"}
-                </button>
-              </div>
-              {descError && <p className="text-xs" style={{ color: "#f87171" }}>{descError}</p>}
-              {descSuggestions.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide"
-                    style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Suggestions</p>
-                  {descSuggestions.map((s, i) => (
-                    <SuggestionCard key={i} s={s} onAdd={saveSuggestion} adding={addingId === `${s.name}-${s.dose}`} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Photo tab */}
-          {addTab === "photo" && (
-            <div className="p-4 space-y-3">
-              {showCamera && (
-                <CameraModal
-                  onCapture={(f) => { loadPhotoFile(f); setShowCamera(false); }}
-                  onClose={() => setShowCamera(false)}
-                />
-              )}
-
-              <p className="text-xs text-gray-400">Photo your supplement bottle — Gemini will read the label.</p>
-
-              {/* Upload / camera area */}
-              {!photoPreview ? (
-                <div className="space-y-2">
-                  <div
-                    onClick={() => photoRef.current?.click()}
-                    className="border-2 border-dashed border-gray-600 hover:border-gray-500 rounded-xl p-5 text-center cursor-pointer transition-colors"
-                  >
-                    <svg className="w-8 h-8 text-gray-600 mx-auto mb-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <p className="text-xs text-gray-500">Click to upload a photo</p>
-                  </div>
-                  {hasCam && (
-                    <button
-                      onClick={() => setShowCamera(true)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-gray-600 hover:border-gray-500 text-gray-400 hover:text-gray-300 transition-colors text-sm font-medium"
-                    >
-                      <span>📷</span> Take a photo
-                    </button>
-                  )}
-                  <input ref={photoRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
-                </div>
-              ) : (
-                <div className="relative">
-                  <img src={photoPreview} alt="preview" className="max-h-40 w-full mx-auto rounded-xl object-contain" />
-                  <button
-                    onClick={() => { setPhotoPreview(null); setPhotoBase64(null); setPhotoSuggestions([]); setPhotoError(null); }}
-                    className="absolute top-2 right-2 p-1 rounded-full bg-black/50 text-white hover:bg-black/70 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <button onClick={resetAdd} className="px-4 py-2 rounded-lg bg-gray-700 text-gray-300 text-sm hover:bg-gray-600 transition-colors">Cancel</button>
-                <button
-                  onClick={runPhotoAnalysis}
-                  disabled={photoLoading || !photoBase64}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-semibold transition-colors"
-                >
-                  {photoLoading ? (
-                    <>
-                      <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                      Analyzing…
-                    </>
-                  ) : "Identify Supplement"}
-                </button>
-              </div>
-
-              {photoError && <p className="text-xs text-red-400">{photoError}</p>}
-              {photoSuggestions.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Identified</p>
-                  {photoSuggestions.map((s, i) => (
-                    <SuggestionCard key={i} s={s} onAdd={saveSuggestion} adding={addingId === `${s.name}-${s.dose}`} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Barcode tab */}
-          {addTab === "barcode" && (
-            <div className="p-4 space-y-3">
-              {/* Result / confirm card */}
-              {bcPhase === "result" && bcConfirm && (
-                <div className="space-y-3">
-                  {bcConfirm.image && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={bcConfirm.image} alt={bcConfirm.name}
-                      className="h-16 mx-auto object-contain rounded-lg"
-                      style={{ background: "var(--bg-high)" }} />
-                  )}
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      value={bcConfirm.name}
-                      onChange={e => setBcConfirm(c => c ? { ...c, name: e.target.value } : c)}
-                      placeholder="Supplement name"
-                      className="col-span-2 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                    />
-                    <input
-                      value={bcConfirm.brand ?? ""}
-                      onChange={e => setBcConfirm(c => c ? { ...c, brand: e.target.value } : c)}
-                      placeholder="Brand (opt.)"
-                      className="rounded-lg px-3 py-2 text-sm focus:outline-none"
-                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                    />
-                  </div>
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="space-y-1">
-                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Dose</p>
-                      <input
-                        type="number"
-                        value={bcConfirm.dose}
-                        onChange={e => setBcConfirm(c => c ? { ...c, dose: e.target.value } : c)}
-                        placeholder="500"
-                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Unit</p>
-                      <select value={bcConfirm.unit}
-                        onChange={e => setBcConfirm(c => c ? { ...c, unit: e.target.value as SupplementUnit } : c)}
-                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                        {(["mg", "mcg", "IU", "g"] as SupplementUnit[]).map(u => <option key={u}>{u}</option>)}
-                      </select>
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills</p>
-                      <input
-                        type="number"
-                        min="1"
-                        max="20"
-                        value={bcConfirm.pills}
-                        onChange={e => setBcConfirm(c => c ? { ...c, pills: e.target.value } : c)}
-                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>When</p>
-                      <select value={bcTimeOfDay}
-                        onChange={e => setBcTimeOfDay(e.target.value as TimeOfDay)}
-                        className="w-full rounded-lg px-2 py-2 text-sm focus:outline-none"
-                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", color: "var(--text)" }}>
-                        {TIME_ORDER.map(t => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={bcReset}
-                      className="px-3 py-2 rounded-lg text-xs font-semibold"
-                      style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
-                      Scan again
-                    </button>
-                    <button onClick={bcAdd} disabled={saving || !bcConfirm.name.trim() || !bcConfirm.dose}
-                      className="flex-1 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
-                      style={{ background: "rgba(52,211,153,0.15)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)" }}>
-                      {saving ? "Adding…" : "Add"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Camera viewfinder */}
-              {bcPhase === "scanning" && (
-                <div className="relative rounded-xl overflow-hidden" style={{ aspectRatio: "4/3", background: "#000" }}>
-                  <video ref={bcVideoRef} muted playsInline className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="w-48 h-32 rounded-xl"
-                      style={{ border: "2px solid #a78bfa", boxShadow: "0 0 0 9999px rgba(0,0,0,0.45)" }} />
-                  </div>
-                  <p className="absolute bottom-3 left-0 right-0 text-center text-xs font-medium"
-                    style={{ fontFamily: "var(--font-mono)", color: "rgba(255,255,255,0.8)" }}>
-                    {bcScanHint}
-                  </p>
-                  <button onClick={bcReset}
-                    className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: "rgba(0,0,0,0.5)", color: "#fff" }}>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              )}
-
-              {/* Loading */}
-              {bcPhase === "loading" && (
-                <div className="flex flex-col items-center justify-center py-10 gap-3">
-                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24" style={{ color: "#a78bfa" }}>
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
-                  <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
-                    LOOKING UP PRODUCT…
-                  </p>
-                </div>
-              )}
-
-              {/* Idle / error — scan + manual entry */}
-              {(bcPhase === "idle" || bcPhase === "error") && (
-                <div className="space-y-3">
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                    Scan a supplement barcode to auto-fill name and dose.
-                  </p>
-                  {hasBarcodeDetector && (
-                    <button onClick={bcStartCamera}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold"
-                      style={{ fontFamily: "var(--font-display)", background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8H3m2 0h.01M9 20H7m-2 0h.01" />
-                      </svg>
-                      Scan Barcode
-                    </button>
-                  )}
-                  {hasBarcodeDetector && (
-                    <p className="text-[10px] text-center"
-                      style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>— or enter manually —</p>
-                  )}
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="e.g. 5000157024763"
-                      value={bcManInput}
-                      onChange={e => setBcManInput(e.target.value.replace(/\D/g, ""))}
-                      onKeyDown={e => { if (e.key === "Enter" && bcManInput.length >= 8) bcLookup(bcManInput); }}
-                      className="flex-1 px-3 py-2.5 text-sm focus:outline-none rounded-lg"
-                      style={{ background: "var(--bg-raised)", color: "var(--text)", border: "1px solid var(--border-mid)", fontFamily: "var(--font-mono)" }}
-                    />
-                    <button
-                      onClick={() => bcManInput.length >= 8 && bcLookup(bcManInput)}
-                      disabled={bcManInput.length < 8}
-                      className="px-3 py-2.5 rounded-lg text-sm font-semibold shrink-0 disabled:opacity-40"
-                      style={{
-                        fontFamily: "var(--font-display)",
-                        background: bcManInput.length >= 8 ? "rgba(139,92,246,0.15)" : "var(--bg-raised)",
-                        color: bcManInput.length >= 8 ? "#a78bfa" : "var(--text-dim)",
-                        border: `1px solid ${bcManInput.length >= 8 ? "rgba(139,92,246,0.25)" : "var(--border-mid)"}`,
-                      }}>
-                      Look up
-                    </button>
-                  </div>
-                  {bcError && (
-                    <div className="rounded-lg px-3 py-2.5 text-sm flex items-start gap-2"
-                      style={{ background: "rgba(255,107,107,0.08)", border: "1px solid rgba(255,107,107,0.25)", color: "var(--coral)" }}>
-                      <span className="text-base leading-none mt-0.5">⚠</span>
-                      <span>{bcError}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <SupplementAddPanel
+          onSaved={load}
+          onClose={() => setShowAdd(false)}
+        />
       )}
 
       {/* ── Load error ───────────────────────────────────────────────────── */}
@@ -1041,7 +320,7 @@ export default function SupplementLog({ date }: Props) {
           <div className="rounded-xl p-3 flex items-start justify-between gap-2"
             style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
             <p className="text-xs" style={{ color: "#f87171" }}>Tips failed: {tipsError}</p>
-            <button onClick={() => setTipsError(null)} className="text-xs flex-shrink-0" style={{ color: "var(--text-dim)" }}>✕</button>
+            <button onClick={() => setTipsError(null)} className="text-xs flex-shrink-0" style={{ color: "var(--text-dim)" }} aria-label="Dismiss error">✕</button>
           </div>
         </div>
       )}
@@ -1067,7 +346,7 @@ export default function SupplementLog({ date }: Props) {
           </div>
           <div className="flex justify-center gap-2">
             <button
-              onClick={() => { setShowAdd(true); setAddTab("manual"); }}
+              onClick={() => setShowAdd(true)}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors"
               style={{ background: "var(--bg-raised)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
             >
@@ -1108,6 +387,9 @@ export default function SupplementLog({ date }: Props) {
                     border: s.taken ? "2px solid #34d399" : "2px solid var(--border-mid)",
                     background: s.taken ? "#34d399" : "transparent",
                   }}
+                  role="checkbox"
+                  aria-checked={s.taken}
+                  aria-label={`${s.name || "supplement"} — mark as ${s.taken ? "not taken" : "taken"}`}
                 >
                   {s.taken && (
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={3}>
@@ -1119,7 +401,7 @@ export default function SupplementLog({ date }: Props) {
                 {/* Name + dose */}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{
-                    color: s.taken ? "var(--text-dim)" : (s.name ? "var(--text)" : "#f87171"),
+                    color: s.taken ? "var(--text-muted)" : (s.name ? "var(--text)" : "#f87171"),
                     textDecoration: s.taken ? "line-through" : "none",
                     fontFamily: "var(--font-display)",
                     fontStyle: s.name ? "normal" : "italic",
@@ -1144,6 +426,7 @@ export default function SupplementLog({ date }: Props) {
                       ? { background: "rgba(56,189,248,0.12)", color: "#38bdf8" }
                       : { color: "var(--text-dim)" }}
                     title="Info & tips"
+                    aria-label={`Info and tips for ${s.name || "supplement"}`}
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1161,9 +444,10 @@ export default function SupplementLog({ date }: Props) {
                         setEditingId(null);
                       }
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded transition-all"
                     style={{ color: retakeId === s.id ? "#34d399" : "var(--text-dim)" }}
                     title="Add another dose"
+                    aria-label={`Add another dose of ${s.name}`}
                   >
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1177,6 +461,7 @@ export default function SupplementLog({ date }: Props) {
                   className="p-1 rounded transition-all"
                   style={{ color: editingId === s.id ? "#a78bfa" : "var(--text-dim)" }}
                   title="Edit"
+                  aria-label={`Edit ${s.name || "supplement"}`}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -1186,9 +471,10 @@ export default function SupplementLog({ date }: Props) {
                 {/* Delete */}
                 <button
                   onClick={() => remove(s.id)}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded transition-all"
                   style={{ color: "var(--text-dim)" }}
                   title="Remove"
+                  aria-label={`Remove ${s.name || "supplement"}`}
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1328,23 +614,6 @@ export default function SupplementLog({ date }: Props) {
           ))}
         </div>
       ))}
-
-      {/* ── Progress bar ─────────────────────────────────────────────────── */}
-      {items.length > 0 && (
-        <div className="px-5 py-3" style={{ borderTop: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: "var(--border-mid)" }}>
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${(takenCount / items.length) * 100}%`, background: "#34d399" }}
-              />
-            </div>
-            <span className="text-xs tabular-nums" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              {Math.round((takenCount / items.length) * 100)}%
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* ── AI Recommendations ────────────────────────────────────────────── */}
       {showRecs && (

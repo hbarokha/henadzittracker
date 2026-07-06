@@ -111,6 +111,7 @@ function IconBtn({
     <button
       onClick={onClick}
       title={title}
+      aria-label={title}
       className="w-9 h-9 rounded-lg flex items-center justify-center transition-all duration-200"
       style={{
         background: active ? "var(--amber-dim)" : "transparent",
@@ -208,9 +209,18 @@ export default function Home() {
       .catch(() => setGarminStatus({ connected: false, username: null }));
   }, []);
 
+  const [logError, setLogError] = useState<string | null>(null);
   const fetchLog = useCallback(async () => {
-    const res = await fetch(`/api/log?date=${selectedDate}`);
-    setEntries(await res.json());
+    // Without an error state a failed load renders an empty day that looks like
+    // "nothing logged" — surface it instead.
+    try {
+      const res = await fetch(`/api/log?date=${selectedDate}`);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      setEntries(await res.json());
+      setLogError(null);
+    } catch (e) {
+      setLogError(e instanceof Error ? e.message : String(e));
+    }
   }, [selectedDate]);
 
   useEffect(() => { fetchLog(); }, [fetchLog]);
@@ -328,6 +338,7 @@ export default function Home() {
           <div className="hidden sm:flex items-center gap-1 flex-1 justify-center">
             <button
               onClick={goBack}
+              aria-label="Previous day"
               className="w-7 h-7 rounded flex items-center justify-center transition-colors"
               style={{ color: "var(--text-muted)" }}
               onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
@@ -348,6 +359,7 @@ export default function Home() {
             <button
               onClick={goForward}
               disabled={isToday}
+              aria-label="Next day"
               className="w-7 h-7 rounded flex items-center justify-center transition-colors disabled:opacity-25"
               style={{ color: "var(--text-muted)" }}
               onMouseEnter={e => { if (!isToday) (e.currentTarget.style.color = "var(--text)"); }}
@@ -417,6 +429,7 @@ export default function Home() {
         >
           <button
             onClick={goBack}
+            aria-label="Previous day"
             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
             style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
           >
@@ -442,6 +455,7 @@ export default function Home() {
           <button
             onClick={goForward}
             disabled={isToday}
+            aria-label="Next day"
             className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
             style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
           >
@@ -457,6 +471,20 @@ export default function Home() {
 
       {/* ── Tab Content ─────────────────────────────────────────────────── */}
       <main className="max-w-5xl mx-auto px-4 py-5">
+
+        {/* Food-log load error — shown on any tab since totals feed the whole UI */}
+        {logError && (
+          <div className="mb-4 rounded-xl p-3 flex items-center justify-between gap-3"
+            style={{ background: "rgba(255,107,107,0.08)", border: "1px solid rgba(255,107,107,0.25)" }}>
+            <p className="text-xs" style={{ color: "var(--coral)" }}>
+              ⚠ Failed to load the food log: {logError}
+            </p>
+            <button onClick={fetchLog} className="text-xs font-semibold shrink-0 px-2 py-1 rounded-md"
+              style={{ color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
+              Retry
+            </button>
+          </div>
+        )}
 
         {/* ── OVERVIEW ──────────────────────────────────────────────────── */}
         {activeTab === "overview" && (

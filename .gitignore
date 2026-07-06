@@ -72,6 +72,6 @@ skills-lock.json
 dev-out.txt
 dev-err.txt
 
-# Screenshot artifacts from testing
-*.png
-*.jpg
+# Screenshot artifacts from testing (repo root only — don't swallow future src/ or public/ assets)
+/*.png
+/*.jpg

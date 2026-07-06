@@ -1,0 +1,20 @@
+New functionality ideas 💡
+Data-leverage features (best fit — you already have the data):
+
+-Correlation insights / experiments — you have months of supplements-adherence × sleep × HRV × stress. Add an "Insights" tab: "On days you took Magnesium, deep sleep averaged +18 min" — computed deterministically, with Claude narrating. Could extend to guided self-experiments ("2 weeks on / 2 weeks off Glycine → compare sleep score").
+-Bio-age trend chart — the biological-age estimate is recomputed daily but only latest.json survives. Persist the history and chart it; that's the single number your stated goal ("reduce biological age") cares about.
+-Chat with your health data — a conversational panel where Claude answers ad-hoc questions ("why was my HRV terrible on Tuesday?") using tool-use over your existing cache readers. The Claude tool-runner makes this a small route, and all the fetch helpers in garmin.ts become tools for free.
+-Weekly email/PDF report — you already compute week deltas; render them into a shareable weekly digest.
+Tracker completeness:
+5. Saved meals (already on your roadmap) — one-tap logging of recurring meals; biggest daily-friction reducer.
+6. Hydration — the Garmin endpoint is documented in CLAUDE.md but the route was never built; plus manual water logging.
+7. Supplement inventory — pills-remaining countdown from daily check-offs → "Vitamin D runs out in 9 days" and a reorder nudge.
+8. Lab results entry — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary; it's the biggest blind spot in the bio-age estimate.
+
+Platform:
+9. PWA — manifest + service worker so it installs on your phone; supplement reminders via scheduled notifications grouped by morning/afternoon/evening (the times are already in the data).
+10. Voice meal logging — Web Speech API → existing /api/ai/text; nearly free to build and great on mobile.
+
+My top-3 recommendation: ETag-safe writes (#1) → vitest for supplements logic (#2) → bio-age trend + insights tab (ideas 1–2), which converts data you already collect into the outcome you're actually chasing.
+
+Want me to start on any of these? The ETag fix + tests would take one session and de-risk everything else.

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { deleteSupplement } from "@/lib/supplements";
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await deleteSupplement(id);
+  const date = new URL(req.url).searchParams.get("date") ?? undefined;
+  await deleteSupplement(id, date);
   return NextResponse.json({ ok: true });
 }

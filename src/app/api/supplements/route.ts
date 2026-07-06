@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getLogForDate, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, type TimeOfDay, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, type TimeOfDay, type PlanItem } from "@/lib/supplements";
 
 const VALID_TIMES = new Set<string>(["morning", "afternoon", "evening", "any"]);
 function sanitizeTime(t: string | undefined): TimeOfDay {
@@ -13,9 +13,10 @@ export async function GET(req: Request) {
   }
   const date = searchParams.get("date");
   if (date) {
-    // Sequential: getLogForDate reads and conditionally writes the same blob as getAllSupplements
-    const log = await getLogForDate(date);
-    const supplements = await getAllSupplements();
+    // getDailyView returns the stack as it was on `date` (active-and-already-created +
+    // anything taken that day) so navigating to past days never loses checked supplements
+    // even after a weekly-plan change deactivated them.
+    const { supplements, log } = await getDailyView(date);
     // Fix any stored supplements that have an invalid timeOfDay (e.g. "daily" from AI)
     const broken = supplements.filter((s) => !VALID_TIMES.has(s.timeOfDay));
     for (const s of broken) {
