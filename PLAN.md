@@ -61,9 +61,10 @@ All components use inline CSS vars rather than global Tailwind overrides (which 
 - [ ] **Nutritional detail drawer** — full vitamin/mineral breakdown via Gemini
 
 ### Data-leverage ideas (uses data already collected)
-- [ ] **Correlation insights / experiments** — deterministic day-over-day correlation between supplement adherence and sleep/HRV/stress, narrated by Claude; extend to guided self-experiments (e.g. 2 weeks on/off a supplement, compare sleep score)
-- [ ] **Biological-age trend chart** — persist each day's bio-age estimate (only `latest.json` survives today) and chart the trend — the metric the stated health goal is actually optimizing for
-- [ ] **Chat with your health data** — conversational panel answering ad-hoc questions via Claude tool-use over the existing Garmin/nutrition/supplement cache readers
+- [x] **Correlation insights / experiments** — deterministic dose-day vs next-day comparison of sleep/HRV/stress/RHR/Body-Battery per supplement (`lib/correlations.ts`, `GET /api/insights`), narrated by Claude with self-experiment suggestions (Gemini fallback); Overview card with per-metric delta chips
+- [x] **Biological-age trend chart** — every AI summary now upserts the day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`); `GET /api/bioage` + purple trend line card on Overview
+- [x] **Body Battery trend chart** — `GET /api/garmin/bodybattery/trend` reads 14 days of cached data (no live Garmin calls); low–high band chart on Overview
+- [x] **Chat with your health data** — `POST /api/ai/chat`: Claude (tool use, manual loop, max 6 iterations, 100s deadline) over cache-reader tools `get_day_data` / `get_range_summary` / `get_profile`; chat panel with starter questions on Overview. Claude-only (needs `ANTHROPIC_API_KEY`)
 - [ ] **Weekly email/PDF report** — render the already-computed week-vs-prior-week deltas into a shareable digest
 - [ ] **Supplement inventory** — pills-remaining countdown from daily check-offs, reorder nudge
 - [ ] **Lab results entry** — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary — currently the biggest blind spot in the bio-age estimate

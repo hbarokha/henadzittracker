@@ -14,6 +14,10 @@ import WeightChart     from "@/components/WeightChart";
 import GarminDashboard from "@/components/GarminDashboard";
 import GarminConnectModal from "@/components/GarminConnectModal";
 import HealthSummaryPanel from "@/components/HealthSummaryPanel";
+import BioAgeChart     from "@/components/BioAgeChart";
+import BodyBatteryChart from "@/components/BodyBatteryChart";
+import CorrelationInsights from "@/components/CorrelationInsights";
+import HealthChat      from "@/components/HealthChat";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
@@ -551,6 +555,14 @@ export default function Home() {
               </section>
             )}
 
+            {/* Body Battery trend — cached data only, needs a connected Garmin */}
+            {garminStatus?.connected && (
+              <section>
+                <SectionHead label="Body Battery Trend" />
+                <BodyBatteryChart date={selectedDate} />
+              </section>
+            )}
+
             {/* AI Health Summary — waits until Garmin data for the date is freshly loaded */}
             <section>
               <SectionHead label="AI Health Analysis" />
@@ -560,6 +572,24 @@ export default function Home() {
                 onSyncGarmin={garminStatus?.connected ? syncGarmin : undefined}
                 ready={garminStatus !== null && (!garminStatus.connected || garminLoadedDate === selectedDate)}
               />
+            </section>
+
+            {/* Chat with your health data */}
+            <section>
+              <SectionHead label="Ask Your Health Data" />
+              <HealthChat date={selectedDate} />
+            </section>
+
+            {/* Biological age trend — fed by the AI health summary */}
+            <section>
+              <SectionHead label="Biological Age Trend" />
+              <BioAgeChart />
+            </section>
+
+            {/* Supplement ↔ recovery correlations */}
+            <section>
+              <SectionHead label="Correlation Insights" />
+              <CorrelationInsights date={selectedDate} />
             </section>
 
             {/* Weight chart */}

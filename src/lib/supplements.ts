@@ -156,6 +156,18 @@ export async function getAdherenceForRange(
   return result;
 }
 
+// Per-supplement list of dates (within the given window) on which it was taken —
+// feeds the deterministic correlation-insights engine.
+export async function getTakenDatesBySupplement(dates: string[]): Promise<Record<string, string[]>> {
+  const data = await loadData();
+  const dateSet = new Set(dates);
+  const map: Record<string, string[]> = {};
+  for (const l of data.log) {
+    if (l.taken && dateSet.has(l.date)) (map[l.supplementId] ??= []).push(l.date);
+  }
+  return map;
+}
+
 export async function setTaken(supplementId: string, date: string, taken: boolean): Promise<void> {
   await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
     const entry = data.log.find((l) => l.supplementId === supplementId && l.date === date);

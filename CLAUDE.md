@@ -113,6 +113,23 @@ the official developer program is currently suspended as of 2024).
 - Dedicated **Supplement Analysis** section: stack assessment (incl. per-supplement total-daily-dose adequacy vs safe upper limits), adherence insights, gaps (data-grounded, ingredient-level dedup vs combo products), timing tips (absorption competition + fat-soluble pairing), interactions incl. cross-product nutrient overlaps with cumulative totals
 - All available data is fed to Gemini: profile (age/sex/weight/BMR/TDEE), VO2 max, body composition, sleep stages + HRV status + 5-day avg HRV, training readiness score, acute/chronic training load, SpO2, respiration rate, intensity minutes vs WHO targets, full workout details (HR, distance, training effect, training load, PRs), body battery charged/drained, stress rest%, supplement adherence rates, weight trend, 7-day nutrition averages
 
+### Correlation Insights
+- Deterministic supplement ↔ recovery correlations over the last 30 days (`lib/correlations.ts`): each supplement's dose days vs non-dose days, compared on the **following day's** sleep score, deep sleep, sleep duration, HRV, stress, resting HR, and Body Battery recharge (a date's sleep/HRV caches describe the night that ended that morning, so day-D doses map to D+1 metrics)
+- Requires ≥4 dose days and ≥4 non-dose days per supplement/metric; numbers are computed in code — the AI never invents them
+- `GET /api/insights?date=…` returns the correlation table + a Claude-written narrative and 1–3 self-experiment suggestions (e.g. "2 weeks on / 2 weeks off, compare sleep score"); Gemini fallback; narration is best-effort (table always returned). Cached per date in `data/insights-cache/`, invalidated by data hash
+- Overview card with per-metric delta chips (green = beneficial direction, hover shows the underlying averages) and the AI narrative
+
+### Trend Charts
+- **Biological-age trend** — every AI health summary upserts that day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`, ETag-safe `mutateJson`); `GET /api/bioage?days=90`; purple line chart on Overview showing latest estimate, delta vs chronological age, and change across recorded checks
+- **Body Battery trend** — `GET /api/garmin/bodybattery/trend?date=…&days=14` reads only the per-date Garmin cache files (never calls Garmin); Overview band chart between each day's low and high with charged/drained in the header
+
+### Chat With Your Health Data
+- Conversational panel on the Overview tab — ask ad-hoc questions ("why was my HRV terrible on Tuesday?", "am I hitting my protein goal?")
+- `POST /api/ai/chat` runs Claude (`claude-opus-4-8` default, `ANTHROPIC_CHAT_MODEL` override) with **tool use** in a manual agentic loop (max 6 tool iterations, 100 s deadline with stream abort to stay under the Azure SWA gateway timeout)
+- Tools read the existing caches only — no live Garmin calls, no writes: `get_day_data(date, sections)` (any Garmin cache section + food log + supplement checklist), `get_range_summary(start,end)` (aggregates + compact per-day rows, ≤31 days), `get_profile()`
+- Claude-only feature (tool use is the point) — requires `ANTHROPIC_API_KEY`; adaptive thinking, effort `low` for interactive latency
+- Client keeps the conversation in component state and sends the full history each turn; starter-question chips, NEW CHAT reset
+
 ### General
 - Navigate between past days with ← → arrows to review any day's log
 - 7-day calorie history bar chart with goal line
@@ -158,7 +175,8 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 |-----------------------------------|----------------------------------------------------------------|
 | `GEMINI_API_KEY`                  | Google Gemini API key — food/supplement AI + summary fallback  |
 | `ANTHROPIC_API_KEY`               | Anthropic (Claude) key — primary AI health summary provider (optional; falls back to Gemini) |
-| `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary (default `claude-opus-4-8`; e.g. `claude-sonnet-5`) |
+| `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary + correlation narration (default `claude-opus-4-8`; e.g. `claude-sonnet-5`) |
+| `ANTHROPIC_CHAT_MODEL`            | Claude model for the health-data chat (default `claude-opus-4-8`)  |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage connection string (empty = local fs mode)   |
 | `AZURE_STORAGE_CONTAINER`         | Blob container name (default: `henadzittracker`)                    |
 
@@ -195,12 +213,16 @@ src/
         bloodpressure/route.ts      GET — BP readings (systolic/diastolic/pulse) + day average
         epochs/route.ts             GET — 15-minute epoch blocks (steps + calories)
         trainingstatus/route.ts     GET — readiness score, acute/chronic load, HR zones
+        bodybattery/trend/route.ts  GET — 14-day Body Battery trend from cached files only (no Garmin calls)
+      insights/route.ts             GET — deterministic supplement↔recovery correlations + Claude narration (Gemini fallback), cached per date
+      bioage/route.ts               GET — biological-age history recorded by the AI summary
       ai/
         text/route.ts               POST — text → nutrition (Gemini)
         image/route.ts              POST — image → nutrition (Gemini)
         barcode/route.ts            GET  — barcode → nutrition (Open Food Facts)
-        summary/route.ts            POST — AI health summary (Gemini)
+        summary/route.ts            POST — AI health summary (Claude primary, Gemini fallback); upserts bio-age history
         supplements/route.ts        POST — supplement actions: identify-text, identify-image, recommend, generate-tips
+        chat/route.ts               POST — chat with your health data (Claude tool use over cache readers; Claude-only)
     globals.css
     layout.tsx
     page.tsx                        3-tab SPA: Overview / Nutrition / Supplements; date nav, goals, streak, TabBar
@@ -219,6 +241,10 @@ src/
     SupplementLog.tsx               Daily checklist + library; CSS-variable styled; adherence progress bar; inline tip display (line-clamped); ✨ Tips button generates per-supplement AI guidance; inline edit for dose/unit/pills/time
     SupplementPlanner.tsx           Weekly plan screen — history candidates with suggested pre-selection, per-row editable dose/unit/pills/time, apply-suggestion-or-choose-own, "Apply plan" reconciles the active stack
     WeightChart.tsx                 Body weight trend line chart
+    BioAgeChart.tsx                 Biological-age trend line chart (fed by /api/bioage)
+    BodyBatteryChart.tsx            14-day Body Battery low–high band chart (cache-only trend route)
+    CorrelationInsights.tsx         Supplement↔recovery correlation card — AI narrative + per-metric delta chips
+    HealthChat.tsx                  Chat panel over the user's own health data (Claude tool use)
     GarminConnectModal.tsx          Email/password login form + session status
     GarminDashboard.tsx             All Garmin metrics + workout cards (single file)
     CameraModal.tsx                 Shared live-camera capture modal (getUserMedia); used by AIPhotoTab + SupplementLog
@@ -229,7 +255,9 @@ src/
     gemini.ts                       Gemini REST wrapper + NutritionFood type
     profile.ts                      UserProfile interface + BMR/TDEE calculations
     garmin.ts                       Session client + all typed fetch helpers + interfaces
-    supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange() + getSupplementHistory()/applyWeeklyPlan() (weekly planner)
+    supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange() + getTakenDatesBySupplement() + getSupplementHistory()/applyWeeklyPlan() (weekly planner)
+    correlations.ts                 Deterministic dose-day vs next-day metric correlation engine (min 4 days per group)
+    bioage.ts                       Biological-age history — recordBioAge() upsert + getBioAgeHistory()
     weight-db.ts                    Body weight blob/file persistence helpers
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
 data/
@@ -260,6 +288,9 @@ data/
   summary-cache/
     YYYY-MM-DD-{bracket}.json       Persisted AI health summary per time-of-day bracket — regenerates when the data hash changes
     latest.json                     Pointer to the most recent analysis — fed back into the next prompt as coach memory
+  insights-cache/
+    YYYY-MM-DD.json                 Cached correlation insights per date — invalidated when the correlation table's hash changes
+  bioage-history.json               One bio-age estimate per analyzed date — upserted by the AI summary, read by the trend chart
   weight.json                       Body weight log (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
@@ -501,9 +532,10 @@ Activity multipliers:
 - [x] **Deploy to Azure Static Web Apps** — dual-mode storage.ts (local fs / Azure Blob), SWA config, env vars documented
 - [ ] Garmin hydration route — `/api/garmin/hydration` (endpoint planned, not built)
 - [ ] Water intake tracker — daily hydration goal (sync from Garmin if available)
-- [ ] Correlation insights / experiments — deterministic day-over-day correlation between supplement adherence and sleep/HRV/stress (e.g. "on days you took Magnesium, deep sleep averaged +18 min"), narrated by Claude; extend to guided self-experiments ("2 weeks on / 2 weeks off Glycine → compare sleep score")
-- [ ] Biological-age trend chart — persist each day's bio-age estimate (currently only `summary-cache/latest.json` survives) and chart the trend over time — the single number the stated health goal is optimizing for
-- [ ] Chat with your health data — conversational panel where Claude answers ad-hoc questions ("why was my HRV terrible on Tuesday?") via tool-use over the existing Garmin/nutrition/supplement cache readers
+- [x] **Correlation insights / experiments** — deterministic dose-day vs next-day correlation engine (`lib/correlations.ts`) + `GET /api/insights` with Claude narration and self-experiment suggestions (Gemini fallback); Overview card with per-metric delta chips
+- [x] **Biological-age trend chart** — bio-age history persisted per analyzed date (`lib/bioage.ts` → `bioage-history.json`), `GET /api/bioage`, purple trend chart on Overview
+- [x] **Body Battery trend chart** — cache-only 14-day trend route (`/api/garmin/bodybattery/trend`) + low–high band chart on Overview
+- [x] **Chat with your health data** — `POST /api/ai/chat`: Claude tool-use (get_day_data / get_range_summary / get_profile) over the existing cache readers; chat panel on Overview (requires `ANTHROPIC_API_KEY`)
 - [ ] Weekly email/PDF report — render the already-computed week-vs-prior-week deltas into a shareable weekly digest
 - [ ] Supplement inventory — pills-remaining countdown from daily check-offs ("Vitamin D runs out in 9 days") with a reorder nudge
 - [ ] Lab results entry — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary; currently the biggest blind spot in the bio-age estimate

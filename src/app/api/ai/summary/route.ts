@@ -5,6 +5,7 @@ import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson, writeJson } from "@/lib/storage";
+import { recordBioAge } from "@/lib/bioage";
 import { generateSummary } from "@/lib/summary/providers";
 import { SUMMARY_SYSTEM_PROMPT } from "@/lib/summary/prompt";
 import { readGarminCache, shiftDate, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
@@ -353,6 +354,19 @@ Weight trend: ${weightChange != null
     await writeSummaryCache(date, bracket, result, dataHash);
     // Pointer to the most recent analysis — read back as coach memory on the next run
     await writeJson("summary-cache/latest.json", { generatedAt: new Date().toISOString(), date, data: result });
+    // Durable bio-age series for the trend chart (upsert per date, best-effort)
+    if (result?.biologicalAge?.estimate != null) {
+      try {
+        await recordBioAge({
+          date,
+          estimate: result.biologicalAge.estimate,
+          delta: result.biologicalAge.delta ?? null,
+          confidence: result.biologicalAge.confidence ?? null,
+        });
+      } catch (e) {
+        console.warn("bio-age history write failed:", e instanceof Error ? e.message : e);
+      }
+    }
     return NextResponse.json({ ...result, cached: false });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
