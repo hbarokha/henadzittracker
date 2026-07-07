@@ -188,6 +188,13 @@ const rawEffort = process.env.ANTHROPIC_SUMMARY_EFFORT || "medium";
 const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "medium") as
   "low" | "medium" | "high" | "xhigh" | "max";
 
+// Azure Static Web Apps' gateway kills API calls that run past its own timeout and
+// returns a plain-text "Backend call failure" body (not JSON), which crashes the
+// client's resp.json(). Opus with adaptive thinking can occasionally run long, so we
+// abort the Claude call ourselves well before that gateway limit and fall back to the
+// much faster Gemini path instead of letting the platform kill the whole request.
+const CLAUDE_TIMEOUT_MS = 90_000;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callClaudeJSON(system: string, prompt: string, apiKey: string): Promise<any> {
   const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
@@ -195,7 +202,8 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string): P
     model: CLAUDE_SUMMARY_MODEL,
     max_tokens: 16000,
     // Adaptive thinking sharpens the bio-age/score reasoning; structured output keeps
-    // the final block valid JSON. Streaming avoids HTTP timeouts at this max_tokens.
+    // the final block valid JSON. Streaming avoids the Anthropic SDK's own long-request
+    // timeout at this max_tokens (the outer platform timeout is handled separately below).
     thinking: { type: "adaptive" },
     output_config: {
       effort: CLAUDE_SUMMARY_EFFORT,
@@ -208,7 +216,21 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string): P
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: prompt }],
   });
-  const msg = await stream.finalMessage();
+
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      stream.abort();
+      reject(new Error(`Claude summary timed out after ${CLAUDE_TIMEOUT_MS / 1000}s`));
+    }, CLAUDE_TIMEOUT_MS);
+  });
+  let msg;
+  try {
+    msg = await Promise.race([stream.finalMessage(), timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+
   if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
   const text = msg.content
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

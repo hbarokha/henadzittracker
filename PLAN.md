@@ -60,6 +60,18 @@ All components use inline CSS vars rather than global Tailwind overrides (which 
 - [ ] **Water intake tracker** — daily hydration goal with Garmin sync
 - [ ] **Nutritional detail drawer** — full vitamin/mineral breakdown via Gemini
 
+### Data-leverage ideas (uses data already collected)
+- [ ] **Correlation insights / experiments** — deterministic day-over-day correlation between supplement adherence and sleep/HRV/stress, narrated by Claude; extend to guided self-experiments (e.g. 2 weeks on/off a supplement, compare sleep score)
+- [ ] **Biological-age trend chart** — persist each day's bio-age estimate (only `latest.json` survives today) and chart the trend — the metric the stated health goal is actually optimizing for
+- [ ] **Chat with your health data** — conversational panel answering ad-hoc questions via Claude tool-use over the existing Garmin/nutrition/supplement cache readers
+- [ ] **Weekly email/PDF report** — render the already-computed week-vs-prior-week deltas into a shareable digest
+- [ ] **Supplement inventory** — pills-remaining countdown from daily check-offs, reorder nudge
+- [ ] **Lab results entry** — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary — currently the biggest blind spot in the bio-age estimate
+
+### Platform
+- [ ] **PWA** — installable manifest + service worker; supplement reminders via scheduled notifications by time-of-day group
+- [ ] **Voice meal logging** — Web Speech API → existing `/api/ai/text` route
+
 ### Remaining Garmin routes
 - [x] `/api/garmin/stress` — avg/max stress, stress timeline
 - [x] `/api/garmin/bodybattery` — current/high/low/charged/drained

@@ -344,7 +344,16 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
           goals,
         }),
       });
-      const data = await resp.json();
+      const raw = await resp.text();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        // Platform gateway (e.g. Azure SWA) killed the request and returned a plain-text
+        // body instead of JSON — surface a clear message rather than the raw parse error.
+        throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
+      }
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");
       setSummary(data as HealthSummary);
       setError(null);

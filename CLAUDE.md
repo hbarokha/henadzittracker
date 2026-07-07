@@ -501,6 +501,14 @@ Activity multipliers:
 - [x] **Deploy to Azure Static Web Apps** — dual-mode storage.ts (local fs / Azure Blob), SWA config, env vars documented
 - [ ] Garmin hydration route — `/api/garmin/hydration` (endpoint planned, not built)
 - [ ] Water intake tracker — daily hydration goal (sync from Garmin if available)
+- [ ] Correlation insights / experiments — deterministic day-over-day correlation between supplement adherence and sleep/HRV/stress (e.g. "on days you took Magnesium, deep sleep averaged +18 min"), narrated by Claude; extend to guided self-experiments ("2 weeks on / 2 weeks off Glycine → compare sleep score")
+- [ ] Biological-age trend chart — persist each day's bio-age estimate (currently only `summary-cache/latest.json` survives) and chart the trend over time — the single number the stated health goal is optimizing for
+- [ ] Chat with your health data — conversational panel where Claude answers ad-hoc questions ("why was my HRV terrible on Tuesday?") via tool-use over the existing Garmin/nutrition/supplement cache readers
+- [ ] Weekly email/PDF report — render the already-computed week-vs-prior-week deltas into a shareable weekly digest
+- [ ] Supplement inventory — pills-remaining countdown from daily check-offs ("Vitamin D runs out in 9 days") with a reorder nudge
+- [ ] Lab results entry — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary; currently the biggest blind spot in the bio-age estimate
+- [ ] PWA — manifest + service worker for phone install; supplement reminders via scheduled notifications grouped by morning/afternoon/evening (times already in the data)
+- [ ] Voice meal logging — Web Speech API → existing `/api/ai/text` route
 - [x] **Garmin Connect integration** — session auth + MFA + full data import
 - [x] **Personal profile panel** — age, height, weight, BMR/TDEE
 - [x] **Vitamins & supplements log** — daily checklist + library
