@@ -56,36 +56,37 @@ export default function WeeklyChart({ week, goal, today }: Props) {
       </div>
 
       <div className="relative">
-        {/* Goal line */}
+        {/* Goal line — sits above the 24px day-label zone (h-5 label + mt-1) */}
         <div
           className="absolute inset-x-0 border-t border-dashed pointer-events-none z-10"
           style={{
-            bottom: `${(goal / maxCal) * BAR_H + 20}px`,
-            borderColor: "var(--text-dim)",
-            opacity: 0.4,
+            bottom: `${(goal / maxCal) * BAR_H + 24}px`,
+            borderColor: "var(--amber)",
+            opacity: 0.35,
           }}
         />
 
         {/* Bars */}
-        <div className="flex items-end gap-2" style={{ height: BAR_H + 20 }}>
+        <div className="flex items-end gap-2">
           {week.map(({ date, calories }) => {
             const isToday  = date === today;
             const hasData  = calories > 0;
-            const barH     = hasData ? Math.max((calories / maxCal) * BAR_H, 3) : 2;
-            const color    = hasData ? barColor(calories, goal) : "var(--border-mid)";
+            const barH     = hasData ? Math.max((calories / maxCal) * BAR_H, 3) : 0;
+            const color    = barColor(calories, goal);
 
             return (
-              <div
-                key={date}
-                className="flex-1 flex flex-col items-center"
-                style={{ height: BAR_H + 20 }}
-              >
-                {/* Label above bar */}
-                <div className="flex items-end justify-center" style={{ height: BAR_H - barH }}>
+              <div key={date} className="flex-1 flex flex-col items-center">
+                {/* Bar zone with a ghost track so all 7 day-slots read even when empty */}
+                <div className="relative w-full flex items-end" style={{ height: BAR_H }}>
+                  <div
+                    className="absolute inset-x-0 bottom-0 rounded-sm pointer-events-none"
+                    style={{ height: BAR_H, background: "var(--bg-raised)", opacity: 0.55 }}
+                  />
                   {hasData && (
                     <span
-                      className="text-[9px] mb-1 tabular"
+                      className="absolute inset-x-0 text-center tabular"
                       style={{
+                        bottom: barH + 4,
                         fontFamily: "var(--font-hero)",
                         color: isToday ? color : "var(--text-muted)",
                         fontSize: "11px",
@@ -94,26 +95,22 @@ export default function WeeklyChart({ week, goal, today }: Props) {
                       {calories >= 1000 ? `${(calories / 1000).toFixed(1)}k` : calories}
                     </span>
                   )}
-                </div>
-
-                {/* Bar */}
-                <div
-                  className="w-full rounded-sm"
-                  style={{
-                    height:     barH,
-                    background: isToday ? color : `${color}55`,
-                    transition: "height 0.5s ease",
-                    position:   "relative",
-                    overflow:   "hidden",
-                  }}
-                >
-                  {/* Shine on today's bar */}
-                  {isToday && hasData && (
-                    <div
-                      className="absolute inset-x-0 top-0 h-1/3 opacity-30"
-                      style={{ background: "linear-gradient(180deg, white, transparent)" }}
-                    />
-                  )}
+                  <div
+                    className="w-full rounded-sm relative overflow-hidden"
+                    style={{
+                      height:     barH,
+                      background: isToday ? color : `${color}55`,
+                      transition: "height 0.5s ease",
+                    }}
+                  >
+                    {/* Shine on today's bar */}
+                    {isToday && hasData && (
+                      <div
+                        className="absolute inset-x-0 top-0 h-1/3 opacity-30"
+                        style={{ background: "linear-gradient(180deg, white, transparent)" }}
+                      />
+                    )}
+                  </div>
                 </div>
 
                 {/* Day label */}

@@ -41,6 +41,12 @@ All components use inline CSS vars rather than global Tailwind overrides (which 
 - Added `staticwebapp.config.json` (Node 20 runtime) and `swa-cli.config.json` (Next.js build config)
 - Removed all debug `fs.writeFileSync` calls from MFA flow
 
+### UX Polish Loop (2026-07-07, 3 screenshot-verified rounds)
+- **Honest over-goal states** — macro cards said "✓ complete" when fat was 155/65g; now >105% shows "+Xg over" (coral for fat/carbs, neutral for protein), in both the full Nutrition view and the compact Overview pills; calorie ring shows the true % (124%) while the fill caps at 100%
+- **WeeklyChart readability** — ghost tracks make all 7 day-slots visible with sparse data; amber goal line (was near-invisible gray, 4px offset bug fixed); no more misleading 2px stubs on empty days
+- **Overview information architecture** — Body Battery / Bio Age / Weight / Correlation cards consolidated into a 2-column "Trends" grid (desktop scroll roughly halved)
+- **Supplements declutter** — AI tips hide once an item is checked off (still in the ⓘ expandable); the 19-item daily list reads as a checklist again
+
 ### UX & Bug Fixes
 - **Mobile date navigation** — added compact nav strip on `< sm` screens (was completely absent; mobile users had no way to navigate to previous days)
 - **Body Battery data** — fixed GarminConnect constructor bug (`new GarminConnect({ username: "", password: "" })`), wired daily summary endpoint, synthesized current/charged/drained values

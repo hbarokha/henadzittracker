@@ -555,14 +555,6 @@ export default function Home() {
               </section>
             )}
 
-            {/* Body Battery trend — cached data only, needs a connected Garmin */}
-            {garminStatus?.connected && (
-              <section>
-                <SectionHead label="Body Battery Trend" />
-                <BodyBatteryChart date={selectedDate} />
-              </section>
-            )}
-
             {/* AI Health Summary — waits until Garmin data for the date is freshly loaded */}
             <section>
               <SectionHead label="AI Health Analysis" />
@@ -574,28 +566,21 @@ export default function Home() {
               />
             </section>
 
+            {/* Trends — paired into two columns on desktop to keep the page scannable */}
+            <section>
+              <SectionHead label="Trends" />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
+                <BioAgeChart />
+                <WeightChart todayIso={todayIso} />
+                <CorrelationInsights date={selectedDate} />
+              </div>
+            </section>
+
             {/* Chat with your health data */}
             <section>
               <SectionHead label="Ask Your Health Data" />
               <HealthChat date={selectedDate} />
-            </section>
-
-            {/* Biological age trend — fed by the AI health summary */}
-            <section>
-              <SectionHead label="Biological Age Trend" />
-              <BioAgeChart />
-            </section>
-
-            {/* Supplement ↔ recovery correlations */}
-            <section>
-              <SectionHead label="Correlation Insights" />
-              <CorrelationInsights date={selectedDate} />
-            </section>
-
-            {/* Weight chart */}
-            <section>
-              <SectionHead label="Body Weight Trend" />
-              <WeightChart todayIso={todayIso} />
             </section>
           </div>
         )}

@@ -410,7 +410,9 @@ export default function SupplementLog({ date }: Props) {
                     {s.brand ? <span className="uppercase tracking-wide mr-1.5" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
                     {s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}
                   </p>
-                  {s.usageTip && (
+                  {/* Tip guides the dose you haven't taken yet — once checked off it's
+                      noise, so it collapses (still available via the ⓘ toggle) */}
+                  {s.usageTip && !s.taken && (
                     <p className="text-xs mt-0.5 leading-snug line-clamp-2" style={{ color: "var(--text-muted)" }}>
                       {s.usageTip}
                     </p>

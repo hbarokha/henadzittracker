@@ -50,7 +50,8 @@ const MACROS = [
 ] as const;
 
 export default function DailySummary({ totals, goals, compact }: Props) {
-  const calPct  = Math.min(totals.calories / goals.calories, 1);
+  const rawPct  = totals.calories / goals.calories;
+  const calPct  = Math.min(rawPct, 1);
   const filled  = calPct * CIRCUMFERENCE;
   const gap     = CIRCUMFERENCE - filled;
   const color   = ringColor(calPct);
@@ -80,10 +81,13 @@ export default function DailySummary({ totals, goals, compact }: Props) {
         <div className="flex gap-2">
           {MACROS.map(({ key, label, color: c }) => {
             const val = totals[key]; const goal = goals[key]; const pct = Math.min(val / goal, 1);
+            // Same over-goal semantics as the full view: coral warning for fat/carbs past
+            // 105% of goal; protein over is neutral
+            const isOver = key !== "protein" && val > goal * 1.05;
             return (
-              <div key={key} className="flex-1 rounded-lg px-2.5 py-2" style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}>
+              <div key={key} className="flex-1 rounded-lg px-2.5 py-2" style={{ background: "var(--bg-raised)", border: `1px solid ${isOver ? "rgba(255,107,107,0.35)" : "var(--border)"}` }}>
                 <p className="text-[8px] uppercase tracking-wider mb-1" style={{ fontFamily: "var(--font-mono)", color: c }}>{label}</p>
-                <p className="text-sm leading-none" style={{ fontFamily: "var(--font-hero)", color: "var(--text)" }}>{Math.round(val)}<span className="text-[9px] ml-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>g</span></p>
+                <p className="text-sm leading-none" style={{ fontFamily: "var(--font-hero)", color: isOver ? "var(--coral)" : "var(--text)" }}>{Math.round(val)}<span className="text-[9px] ml-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>g</span></p>
                 <div className="mt-1.5 h-px rounded-full overflow-hidden" style={{ background: "var(--border-mid)" }}>
                   <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: c, transition: "width 0.9s ease" }} />
                 </div>
@@ -149,7 +153,7 @@ export default function DailySummary({ totals, goals, compact }: Props) {
                 className="text-4xl leading-none"
                 style={{ fontFamily: "var(--font-hero)", color }}
               >
-                {Math.round(calPct * 100)}
+                {Math.round(rawPct * 100)}
               </span>
               <span
                 className="text-lg leading-none mb-0.5"
@@ -238,7 +242,12 @@ export default function DailySummary({ totals, goals, compact }: Props) {
           const goal = goals[key];
           const pct  = Math.min(val / goal, 1);
           const left = Math.max(Math.round((goal - val) * 10) / 10, 0);
-          const done = val >= goal;
+          const overBy = Math.round((val - goal) * 10) / 10;
+          // >5% past goal reads as "over", not "complete" — and over-fat/carbs is a
+          // warning while over-protein is neutral
+          const isOver = overBy > goal * 0.05;
+          const done   = val >= goal && !isOver;
+          const overColor = key === "protein" ? c : "var(--coral)";
 
           return (
             <div
@@ -289,10 +298,10 @@ export default function DailySummary({ totals, goals, compact }: Props) {
                 className="text-[9px] mt-1.5"
                 style={{
                   fontFamily: "var(--font-mono)",
-                  color: done ? c : "var(--text-dim)",
+                  color: isOver ? overColor : done ? c : "var(--text-dim)",
                 }}
               >
-                {done ? "✓ complete" : `${left}g left`}
+                {isOver ? `+${overBy}g over` : done ? "✓ complete" : `${left}g left`}
               </p>
             </div>
           );
