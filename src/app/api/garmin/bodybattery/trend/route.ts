@@ -14,14 +14,15 @@ export async function GET(req: Request) {
   const rows = await Promise.all(
     dates.map(async (d) => {
       const [bb, daily] = await Promise.all([
-        readGarminCache<{ highest: number | null; lowest: number | null; charged: number | null; drained: number | null }>(d, "bodybattery"),
-        readGarminCache<{ bodyBatteryHighest: number | null; bodyBatteryLowest: number | null; bodyBatteryCharged: number | null; bodyBatteryDrained: number | null }>(d, "daily"),
+        readGarminCache<{ current: number | null; highest: number | null; lowest: number | null; charged: number | null; drained: number | null }>(d, "bodybattery"),
+        readGarminCache<{ bodyBatteryMostRecent: number | null; bodyBatteryHighest: number | null; bodyBatteryLowest: number | null; bodyBatteryCharged: number | null; bodyBatteryDrained: number | null }>(d, "daily"),
       ]);
+      const current = bb?.current ?? daily?.bodyBatteryMostRecent ?? null;
       const highest = bb?.highest ?? daily?.bodyBatteryHighest ?? null;
       const lowest  = bb?.lowest  ?? daily?.bodyBatteryLowest  ?? null;
       const charged = bb?.charged ?? daily?.bodyBatteryCharged ?? null;
       const drained = bb?.drained ?? daily?.bodyBatteryDrained ?? null;
-      return { date: d, highest, lowest, charged, drained };
+      return { date: d, current, highest, lowest, charged, drained };
     })
   );
 

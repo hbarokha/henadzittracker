@@ -52,21 +52,10 @@ export default function BioAgeChart() {
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
               Biological Age
             </h3>
-            {latest && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-medium" style={{ fontFamily: "var(--font-mono)", color: "var(--text-sec)" }}>
-                  {latest.estimate} yrs
-                </span>
-                {latest.delta != null && (
-                  <span className="text-xs font-medium"
-                    style={{
-                      color: latest.delta < 0 ? "var(--sage)" : latest.delta > 0 ? "var(--coral)" : "var(--text-dim)",
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                    {latest.delta > 0 ? "+" : ""}{latest.delta} vs actual
-                  </span>
-                )}
-              </div>
+            {latest?.confidence && (
+              <p className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+                {latest.confidence} confidence · {entries.length} check{entries.length === 1 ? "" : "s"}
+              </p>
             )}
           </div>
         </div>
@@ -83,34 +72,59 @@ export default function BioAgeChart() {
         )}
       </div>
 
-      {vals.length > 1 ? (
-        <div className="px-5 pt-3 pb-1">
-          <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
-            <defs>
-              <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.3" />
-                <stop offset="100%" stopColor="#a78bfa" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            <path d={areaPath} fill="url(#bag)" />
-            <path d={linePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            {vals.map((v, i) => (
-              <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="#a78bfa" />
-            ))}
-          </svg>
-          <div className="flex justify-between pb-2"
-            style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-            <span>{entries[0]?.date.slice(5)}</span>
-            <span>{entries[entries.length - 1]?.date.slice(5)}</span>
+      {/* Hero number — always shown once we have any estimate, so the card is never blank */}
+      {latest ? (
+        <div className="px-5 pt-4 pb-1">
+          <div className="flex items-end gap-2">
+            <span className="text-5xl leading-none" style={{ fontFamily: "var(--font-hero)", color: "#a78bfa" }}>
+              {latest.estimate}
+            </span>
+            <span className="text-sm leading-none mb-1.5" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+              years
+            </span>
+            {latest.delta != null && (
+              <span className="text-xs leading-none mb-1.5 ml-1"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: latest.delta < 0 ? "var(--sage)" : latest.delta > 0 ? "var(--coral)" : "var(--text-dim)",
+                }}>
+                {latest.delta > 0 ? "+" : ""}{latest.delta} vs chronological
+              </span>
+            )}
           </div>
+
+          {vals.length > 1 ? (
+            <>
+              <svg viewBox={`0 0 ${W} ${H}`} className="w-full mt-2">
+                <defs>
+                  <linearGradient id="bag" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#a78bfa" stopOpacity="0.3" />
+                    <stop offset="100%" stopColor="#a78bfa" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={areaPath} fill="url(#bag)" />
+                <path d={linePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                {vals.map((v, i) => (
+                  <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="#a78bfa" />
+                ))}
+              </svg>
+              <div className="flex justify-between pb-2"
+                style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                <span>{entries[0]?.date.slice(5)}</span>
+                <span>{entries[entries.length - 1]?.date.slice(5)}</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs mt-2 pb-3 leading-snug" style={{ color: "var(--text-muted)" }}>
+              First estimate recorded. The trend line appears once the AI analysis runs on another day.
+            </p>
+          )}
         </div>
       ) : (
         <div className="px-5 py-5 text-center">
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             {loaded
-              ? entries.length === 1
-                ? `One estimate so far (${entries[0].estimate} yrs) — the trend appears after the next AI analysis on a new day.`
-                : "No estimates yet — the AI health analysis records one per day."
+              ? "No estimate yet — run the AI Health Analysis and it records one per day."
               : "Loading…"}
           </p>
         </div>

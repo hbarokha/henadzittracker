@@ -573,7 +573,6 @@ export default function Home() {
                 {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
                 <BioAgeChart />
                 <WeightChart todayIso={todayIso} />
-                <CorrelationInsights date={selectedDate} />
               </div>
             </section>
 
@@ -638,6 +637,14 @@ export default function Home() {
                 ? <SupplementLog date={selectedDate} />
                 : <SupplementPlanner onApplied={() => {}} />}
             </section>
+
+            {/* Supplement ↔ recovery correlations — belongs with the supplement stack */}
+            {supplementView === "daily" && (
+              <section>
+                <SectionHead label="Correlation Insights" />
+                <CorrelationInsights date={selectedDate} />
+              </section>
+            )}
           </div>
         )}
       </main>

@@ -4,10 +4,17 @@ import { useState, useEffect } from "react";
 
 interface BatteryRow {
   date: string;
+  current: number | null;
   highest: number | null;
   lowest: number | null;
   charged: number | null;
   drained: number | null;
+}
+
+function batteryColor(v: number): string {
+  if (v >= 50) return "var(--sage)";
+  if (v >= 25) return "var(--amber)";
+  return "var(--coral)";
 }
 
 // 14-day Body Battery trend — band between daily low and high, from cached
@@ -26,6 +33,9 @@ export default function BodyBatteryChart({ date }: { date: string }) {
   }, [date]);
 
   const latest = rows[rows.length - 1];
+  // Most-recent level to display as a gauge — prefer today's live "current", else fall
+  // back to the latest day's high so the number never reads blank.
+  const currentVal = latest ? (latest.current ?? latest.highest) : null;
 
   const W = 320, H = 90, PAD = 8;
   const n = rows.length;
@@ -53,14 +63,28 @@ export default function BodyBatteryChart({ date }: { date: string }) {
               Body Battery — 14 Days
             </h3>
             {latest && (
-              <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-sec)" }}>
-                {latest.lowest ?? "–"}–{latest.highest ?? "–"}/100
-                {latest.charged != null && <span style={{ color: "var(--sage)" }}> +{latest.charged}</span>}
-                {latest.drained != null && <span style={{ color: "var(--coral)" }}> −{latest.drained}</span>}
+              <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+                range {latest.lowest ?? "–"}–{latest.highest ?? "–"}
+                {latest.charged != null && <span style={{ color: "var(--sage)" }}> · +{latest.charged}</span>}
+                {latest.drained != null && <span style={{ color: "var(--coral)" }}> · −{latest.drained}</span>}
               </p>
             )}
           </div>
         </div>
+        {/* Current level gauge — the number the user asked to see */}
+        {currentVal != null && (
+          <div className="text-right shrink-0">
+            <div className="flex items-baseline gap-1 justify-end">
+              <span className="text-2xl leading-none tabular" style={{ fontFamily: "var(--font-hero)", color: batteryColor(currentVal) }}>
+                {currentVal}
+              </span>
+              <span className="text-[10px]" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>/100</span>
+            </div>
+            <p className="text-[9px] mt-0.5 uppercase tracking-wider" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+              {latest?.current != null ? "current" : "latest high"}
+            </p>
+          </div>
+        )}
       </div>
 
       {n > 1 ? (
@@ -73,9 +97,26 @@ export default function BodyBatteryChart({ date }: { date: string }) {
             ))}
             <path d={bandPath} fill="#38bdf8" fillOpacity="0.15" />
             <path d={highPath} fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            {rows.map((r, i) => r.highest != null && (
-              <circle key={r.date} cx={toX(i)} cy={toY(r.highest)} r="2.5" fill="#38bdf8" />
-            ))}
+            {rows.map((r, i) => {
+              if (r.highest == null) return null;
+              const isLast = i === n - 1;
+              return (
+                <circle key={r.date} cx={toX(i)} cy={toY(r.highest)}
+                  r={isLast ? 3.5 : 2.5} fill="#38bdf8"
+                  stroke={isLast ? "var(--bg-surface)" : "none"} strokeWidth={isLast ? 1.5 : 0} />
+              );
+            })}
+            {/* Today's current level — amber marker + label so "today" is unmistakable */}
+            {latest?.current != null && (
+              <>
+                <circle cx={toX(n - 1)} cy={toY(latest.current)} r="3.5" fill="var(--amber)"
+                  stroke="var(--bg-surface)" strokeWidth="1.5" />
+                <text x={toX(n - 1)} y={toY(latest.current) - 7} textAnchor="end"
+                  fontSize="9" fill="var(--amber)" fontFamily="var(--font-mono)">
+                  now {latest.current}
+                </text>
+              </>
+            )}
           </svg>
           <div className="flex justify-between pb-2"
             style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
