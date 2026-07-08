@@ -109,8 +109,16 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
     } : null
   );
 
+  // The dedicated bodybattery/respiration/spo2 endpoints frequently return a non-null
+  // object with every field null (intraday arrays missing), which defeats a plain `??`
+  // fallback. Detect "present but empty" and fall back to the daily summary, which
+  // reliably carries these aggregates.
+  const bbHasData   = bodyBattery && (bodyBattery.current != null || bodyBattery.highest != null || bodyBattery.lowest != null);
+  const respHasData = respiration && (respiration.avgWaking != null || respiration.highest != null || respiration.lowest != null);
+  const spo2HasData = spo2 && (spo2.average != null || spo2.lowest != null || spo2.latest != null);
+
   // Synthesise body battery from daily summary + sleep data when dedicated endpoint has no data
-  const effectiveBodyBattery: GarminBodyBattery | null = bodyBattery ?? (
+  const effectiveBodyBattery: GarminBodyBattery | null = bbHasData ? bodyBattery : (
     (daily?.bodyBatteryHighest != null || sleep?.bodyBatteryChange != null) ? {
       date,
       current: daily?.bodyBatteryMostRecent ?? null,
@@ -125,8 +133,29 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
     } : null
   );
 
+  // Synthesise respiration / SpO2 from the daily summary when the dedicated endpoints are empty
+  const effectiveRespiration: GarminRespiration | null = respHasData ? respiration : (
+    daily?.avgRespirationRate != null ? {
+      date,
+      avgWaking: daily.avgRespirationRate,
+      highest: daily.highestRespirationRate ?? null,
+      lowest: daily.lowestRespirationRate ?? null,
+      respirationChart: null,
+      syncedAt: daily.syncedAt,
+    } : null
+  );
+  const effectiveSpo2: GarminSpO2 | null = spo2HasData ? spo2 : (
+    daily?.avgSpo2 != null ? {
+      date,
+      average: daily.avgSpo2,
+      lowest: daily.lowestSpo2 ?? null,
+      latest: null,
+      syncedAt: daily.syncedAt,
+    } : null
+  );
+
   const hasData = sleep || heartRate || activities.length > 0 || bodyComp || effectiveHrv || stress || effectiveBodyBattery
-    || (bloodPressure?.readings?.length ?? 0) > 0;
+    || effectiveRespiration || effectiveSpo2 || (bloodPressure?.readings?.length ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -236,15 +265,15 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
           {/* Recovery: body battery + stress */}
           {(effectiveBodyBattery || stress) && (
             <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4 space-y-3">
-              {effectiveBodyBattery && <BodyBatteryCard data={effectiveBodyBattery} fromSleep={!bodyBattery} />}
+              {effectiveBodyBattery && <BodyBatteryCard data={effectiveBodyBattery} fromSleep={!bbHasData} />}
               {stress && <StressCard data={stress} />}
             </div>
           )}
 
           {/* Respiration + SpO2 */}
-          {(respiration || spo2) && (
+          {(effectiveRespiration || effectiveSpo2) && (
             <div className="bg-gray-900 border border-gray-700 rounded-2xl p-4">
-              <RespirationSpO2Card respiration={respiration} spo2={spo2} />
+              <RespirationSpO2Card respiration={effectiveRespiration} spo2={effectiveSpo2} />
             </div>
           )}
 
