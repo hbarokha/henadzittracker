@@ -99,7 +99,11 @@ export default function WeeklyChart({ week, goal, today }: Props) {
                     className="w-full rounded-sm relative overflow-hidden"
                     style={{
                       height:     barH,
-                      background: isToday ? color : `${color}55`,
+                      // `color` is a CSS var() — appending a hex alpha ("var(--coral)55")
+                      // is invalid CSS and renders nothing, so past-day bars were invisible.
+                      // Dim non-today bars with opacity instead.
+                      background: color,
+                      opacity:    isToday ? 1 : 0.55,
                       transition: "height 0.5s ease",
                     }}
                   >
