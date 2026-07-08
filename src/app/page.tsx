@@ -16,13 +16,15 @@ import GarminConnectModal from "@/components/GarminConnectModal";
 import HealthSummaryPanel from "@/components/HealthSummaryPanel";
 import BioAgeChart     from "@/components/BioAgeChart";
 import BodyBatteryChart from "@/components/BodyBatteryChart";
+import StressChart     from "@/components/StressChart";
+import BloodPressureChart from "@/components/BloodPressureChart";
 import CorrelationInsights from "@/components/CorrelationInsights";
 import HealthChat      from "@/components/HealthChat";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
 
-type AppTab = "overview" | "nutrition" | "supplements";
+type AppTab = "overview" | "nutrition" | "supplements" | "analysis";
 
 function isoToday() {
   const d = new Date();
@@ -88,6 +90,15 @@ function IconSupplements() {
   );
 }
 
+function IconAnalysis() {
+  // Sparkles — signals the AI-generated analysis + chat
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+    </svg>
+  );
+}
+
 // ── Section Heading ───────────────────────────────────────────────────────────
 function SectionHead({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
@@ -146,6 +157,7 @@ function TabBar({ active, onChange }: { active: AppTab; onChange: (t: AppTab) =>
     { id: "overview",     label: "Overview",     icon: <IconOverview /> },
     { id: "nutrition",    label: "Nutrition",     icon: <IconNutrition /> },
     { id: "supplements",  label: "Supplements",   icon: <IconSupplements /> },
+    { id: "analysis",     label: "Analysis",      icon: <IconAnalysis /> },
   ];
 
   return (
@@ -555,6 +567,23 @@ export default function Home() {
               </section>
             )}
 
+            {/* Trends — paired into two columns on desktop to keep the page scannable */}
+            <section>
+              <SectionHead label="Trends" />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
+                {garminStatus?.connected && <StressChart date={selectedDate} />}
+                {garminStatus?.connected && <BloodPressureChart date={selectedDate} />}
+                <BioAgeChart />
+                <WeightChart todayIso={todayIso} />
+              </div>
+            </section>
+          </div>
+        )}
+
+        {/* ── ANALYSIS (AI) ─────────────────────────────────────────────── */}
+        {activeTab === "analysis" && (
+          <div className="space-y-6">
             {/* AI Health Summary — waits until Garmin data for the date is freshly loaded */}
             <section>
               <SectionHead label="AI Health Analysis" />
@@ -564,16 +593,6 @@ export default function Home() {
                 onSyncGarmin={garminStatus?.connected ? syncGarmin : undefined}
                 ready={garminStatus !== null && (!garminStatus.connected || garminLoadedDate === selectedDate)}
               />
-            </section>
-
-            {/* Trends — paired into two columns on desktop to keep the page scannable */}
-            <section>
-              <SectionHead label="Trends" />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-                {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
-                <BioAgeChart />
-                <WeightChart todayIso={todayIso} />
-              </div>
             </section>
 
             {/* Chat with your health data */}
