@@ -81,6 +81,10 @@ export async function POST(req: Request) {
   ]);
 
   const monWeights = weightRows.filter((w) => monDates.includes(w.date));
+  // Most recent manually-logged body composition (body fat / muscle / water / bone)
+  const manualComp = [...weightRows].reverse().find(
+    (w) => w.bodyFatPct != null || w.muscleMassKg != null || w.bodyWaterPct != null || w.boneMassKg != null
+  ) ?? null;
   const bmr        = profile ? calculateBMR(profile) : null;
   const tdee       = profile ? calculateTDEE(profile) : null;
 
@@ -112,7 +116,7 @@ export async function POST(req: Request) {
   // cached summary was generated (syncedAt timestamps excluded — they change on
   // every sync even when the values don't)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights },
+    { profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -220,10 +224,13 @@ VO2 Max (cycling): ${na(userMetrics?.vo2MaxCycling)} ml/kg/min
 Garmin Fitness Age: ${na(userMetrics?.fitnessAge)} years (vs chronological age ${profile?.age ?? "unknown"})
 Training status: ${na(userMetrics?.trainingStatus)}
 
-## BODY COMPOSITION (latest Garmin scale reading for ${today})
+## BODY COMPOSITION
 ${todayBodyComp
-  ? `Weight: ${na(todayBodyComp.weightKg, " kg")} | BMI: ${na(todayBodyComp.bmi)} | Body fat: ${na(todayBodyComp.bodyFatPct, "%")} | Muscle mass: ${na(todayBodyComp.muscleMassKg, " kg")} | Body water: ${na(todayBodyComp.bodyWaterPct, "%")}`
+  ? `Garmin scale (${today}): Weight: ${na(todayBodyComp.weightKg, " kg")} | BMI: ${na(todayBodyComp.bmi)} | Body fat: ${na(todayBodyComp.bodyFatPct, "%")} | Muscle mass: ${na(todayBodyComp.muscleMassKg, " kg")} | Body water: ${na(todayBodyComp.bodyWaterPct, "%")}`
   : "No Garmin scale data for this date"}
+${manualComp
+  ? `Manually logged (${manualComp.date}): Weight: ${na(manualComp.weightKg, " kg")} | Body fat: ${na(manualComp.bodyFatPct, "%")} | Muscle mass: ${na(manualComp.muscleMassKg, " kg")} | Body water: ${na(manualComp.bodyWaterPct, "%")} | Bone mass: ${na(manualComp.boneMassKg, " kg")}`
+  : "No manually-logged body composition"}
 
 ## CALORIE & MACRO GOALS${clientGoals ? " (user-configured)" : " (defaults)"}
 Goal: ${clientGoals?.calories ?? tdee ?? 2000} kcal | Protein: ${clientGoals?.protein ?? 150} g | Carbs: ${clientGoals?.carbs ?? 250} g | Fat: ${clientGoals?.fat ?? 65} g

@@ -2,6 +2,8 @@
 
 import { useRef, useState } from "react";
 import type { NutritionFood } from "@/lib/gemini";
+import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
+import AmountStepper from "./AmountStepper";
 import CameraModal from "./CameraModal";
 
 function Spinner({ size = 5 }: { size?: number }) {
@@ -66,7 +68,7 @@ export default function AIPhotoTab({ onAdd }: Props) {
       const foods: NutritionFood[] = data.foods;
       setResults(foods);
       setSelected(new Set(foods.map((_, i) => i)));
-      setQuantities(foods.map(() => 1));
+      setQuantities(foods.map((f) => (isWeighable(f) ? (f.amount as number) : 1)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -86,11 +88,20 @@ export default function AIPhotoTab({ onAdd }: Props) {
     setQuantities((prev) => prev.map((q, idx) => (idx === i ? v : q)));
   }
 
+  // Weighable foods: quantities[i] = grams/ml → scale, quantity 1. Else servings multiplier.
+  function effective(food: NutritionFood, i: number): { food: NutritionFood; quantity: number } {
+    const v = quantities[i] ?? (isWeighable(food) ? (food.amount as number) : 1);
+    return isWeighable(food)
+      ? { food: scaleFoodAmount(food, v), quantity: 1 }
+      : { food, quantity: v };
+  }
+
   async function addSelected() {
     if (!results || selected.size === 0 || adding) return;
     setAdding(true);
     for (const i of selected) {
-      await onAdd(results[i], quantities[i] ?? 1);
+      const eff = effective(results[i], i);
+      await onAdd(eff.food, eff.quantity);
     }
     setAdding(false);
     clearPhoto();
@@ -194,7 +205,9 @@ export default function AIPhotoTab({ onAdd }: Props) {
 
           {results.map((food, i) => {
             const isSelected = selected.has(i);
-            const qty = quantities[i] ?? 1;
+            const weighable  = isWeighable(food);
+            const eff        = effective(food, i);
+            const qty        = quantities[i] ?? (weighable ? (food.amount as number) : 1);
             return (
               <div
                 key={i}
@@ -220,11 +233,11 @@ export default function AIPhotoTab({ onAdd }: Props) {
 
                   <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggle(i)}>
                     <p className="text-sm font-semibold text-gray-900 truncate">{food.name}</p>
-                    <p className="text-xs text-gray-500 truncate">{food.serving}</p>
+                    <p className="text-xs text-gray-500 truncate">{weighable ? eff.food.serving : food.serving}</p>
                   </div>
 
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-gray-900">{Math.round(food.calories * qty)}</p>
+                    <p className="text-sm font-bold text-gray-900">{Math.round(eff.food.calories * eff.quantity)}</p>
                     <p className="text-xs text-gray-400">kcal</p>
                   </div>
                 </div>
@@ -232,17 +245,21 @@ export default function AIPhotoTab({ onAdd }: Props) {
                 {isSelected && (
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-emerald-100">
                     <div className="flex gap-2">
-                      <span className="text-xs font-medium text-blue-600">P {Math.round(food.protein * qty * 10) / 10}g</span>
-                      <span className="text-xs font-medium text-amber-600">C {Math.round(food.carbs   * qty * 10) / 10}g</span>
-                      <span className="text-xs font-medium text-rose-600">F {Math.round(food.fat     * qty * 10) / 10}g</span>
+                      <span className="text-xs font-medium text-blue-600">P {Math.round(eff.food.protein * eff.quantity * 10) / 10}g</span>
+                      <span className="text-xs font-medium text-amber-600">C {Math.round(eff.food.carbs   * eff.quantity * 10) / 10}g</span>
+                      <span className="text-xs font-medium text-rose-600">F {Math.round(eff.food.fat     * eff.quantity * 10) / 10}g</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => setQty(i, Math.max(1, qty - 1))}
-                        className="w-6 h-6 rounded-lg bg-white border border-emerald-200 text-gray-600 flex items-center justify-center text-sm font-bold hover:bg-emerald-50 transition-colors">−</button>
-                      <span className="text-xs font-semibold text-gray-700 tabular-nums w-5 text-center">{qty}</span>
-                      <button type="button" onClick={() => setQty(i, Math.min(20, qty + 1))}
-                        className="w-6 h-6 rounded-lg bg-white border border-emerald-200 text-gray-600 flex items-center justify-center text-sm font-bold hover:bg-emerald-50 transition-colors">+</button>
-                    </div>
+                    {weighable ? (
+                      <AmountStepper amount={qty} unit={food.unit as "g" | "ml"} onChange={(v) => setQty(i, v)} />
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => setQty(i, Math.max(1, qty - 1))}
+                          className="w-6 h-6 rounded-lg bg-white border border-emerald-200 text-gray-600 flex items-center justify-center text-sm font-bold hover:bg-emerald-50 transition-colors">−</button>
+                        <span className="text-xs font-semibold text-gray-700 tabular-nums w-5 text-center">{qty}</span>
+                        <button type="button" onClick={() => setQty(i, Math.min(20, qty + 1))}
+                          className="w-6 h-6 rounded-lg bg-white border border-emerald-200 text-gray-600 flex items-center justify-center text-sm font-bold hover:bg-emerald-50 transition-colors">+</button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

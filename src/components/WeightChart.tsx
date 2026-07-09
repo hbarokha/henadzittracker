@@ -6,16 +6,29 @@ interface WeightEntry {
   id: string;
   date: string;
   weightKg: number;
+  bodyFatPct?: number;
+  muscleMassKg?: number;
+  bodyWaterPct?: number;
+  boneMassKg?: number;
 }
 
 interface Props {
   todayIso: string;
 }
 
+const COMP_FIELDS: { key: "bodyFatPct" | "muscleMassKg" | "bodyWaterPct" | "boneMassKg"; label: string; unit: string; ph: string }[] = [
+  { key: "bodyFatPct",   label: "Body fat",   unit: "%",  ph: "e.g. 18" },
+  { key: "muscleMassKg", label: "Muscle",     unit: "kg", ph: "e.g. 34" },
+  { key: "bodyWaterPct", label: "Body water", unit: "%",  ph: "e.g. 55" },
+  { key: "boneMassKg",   label: "Bone mass",  unit: "kg", ph: "e.g. 3.2" },
+];
+
 export default function WeightChart({ todayIso }: Props) {
   const [entries, setEntries] = useState<WeightEntry[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [input, setInput] = useState("");
+  const [comp, setComp] = useState<Record<string, string>>({});
+  const [showComp, setShowComp] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function load() {
@@ -32,9 +45,18 @@ export default function WeightChart({ todayIso }: Props) {
     await fetch("/api/weight", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: todayIso, weightKg: kg }),
+      body: JSON.stringify({
+        date: todayIso,
+        weightKg: kg,
+        bodyFatPct:   comp.bodyFatPct,
+        muscleMassKg: comp.muscleMassKg,
+        bodyWaterPct: comp.bodyWaterPct,
+        boneMassKg:   comp.boneMassKg,
+      }),
     });
     setInput("");
+    setComp({});
+    setShowComp(false);
     setShowAdd(false);
     setSaving(false);
     await load();
@@ -128,46 +150,88 @@ export default function WeightChart({ todayIso }: Props) {
       {/* Add form */}
       {showAdd && (
         <div
-          className="px-5 py-3 flex gap-2"
+          className="px-5 py-3 flex flex-col gap-2"
           style={{ borderBottom: "1px solid var(--border)", background: "var(--bg-raised)" }}
         >
-          <input
-            type="number"
-            step="0.1"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && addEntry()}
-            placeholder="Weight in kg"
-            autoFocus
-            className="flex-1 px-3 py-2 text-sm rounded-lg focus:outline-none transition-all"
-            style={{
-              background: "var(--bg-surface)",
-              color: "var(--text)",
-              border: "1px solid var(--border-mid)",
-              fontFamily: "var(--font-sans)",
-            }}
-            onFocus={e => (e.target.style.borderColor = "var(--amber)")}
-            onBlur={e  => (e.target.style.borderColor = "var(--border-mid)")}
-          />
+          <div className="flex gap-2">
+            <input
+              type="number"
+              step="0.1"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addEntry()}
+              placeholder="Weight in kg"
+              autoFocus
+              className="flex-1 px-3 py-2 text-sm rounded-lg focus:outline-none transition-all"
+              style={{
+                background: "var(--bg-surface)",
+                color: "var(--text)",
+                border: "1px solid var(--border-mid)",
+                fontFamily: "var(--font-sans)",
+              }}
+              onFocus={e => (e.target.style.borderColor = "var(--amber)")}
+              onBlur={e  => (e.target.style.borderColor = "var(--border-mid)")}
+            />
+            <button
+              onClick={() => setShowAdd(false)}
+              className="px-3 py-2 rounded-lg text-sm transition-all"
+              style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border-mid)" }}
+            >
+              ✕
+            </button>
+            <button
+              onClick={addEntry}
+              disabled={saving || !input}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-40"
+              style={{
+                background: "var(--amber)",
+                color: "#000",
+                fontFamily: "var(--font-display)",
+              }}
+            >
+              Log
+            </button>
+          </div>
+
+          {/* Body composition toggle */}
           <button
-            onClick={() => setShowAdd(false)}
-            className="px-3 py-2 rounded-lg text-sm transition-all"
-            style={{ background: "var(--bg-surface)", color: "var(--text-muted)", border: "1px solid var(--border-mid)" }}
+            onClick={() => setShowComp((v) => !v)}
+            className="self-start text-xs transition-colors"
+            style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--amber)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-dim)")}
           >
-            ✕
+            {showComp ? "− body composition" : "+ body composition (optional)"}
           </button>
-          <button
-            onClick={addEntry}
-            disabled={saving || !input}
-            className="px-4 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-40"
-            style={{
-              background: "var(--amber)",
-              color: "#000",
-              fontFamily: "var(--font-display)",
-            }}
-          >
-            Log
-          </button>
+
+          {showComp && (
+            <div className="grid grid-cols-2 gap-2">
+              {COMP_FIELDS.map(({ key, label, unit, ph }) => (
+                <div key={key} className="flex flex-col gap-1">
+                  <label className="text-[10px] tracking-wide uppercase" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
+                    {label} ({unit})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={comp[key] ?? ""}
+                    onChange={(e) => setComp((c) => ({ ...c, [key]: e.target.value }))}
+                    onKeyDown={(e) => e.key === "Enter" && addEntry()}
+                    placeholder={ph}
+                    className="px-2.5 py-1.5 text-sm rounded-lg focus:outline-none transition-all"
+                    style={{
+                      background: "var(--bg-surface)",
+                      color: "var(--text)",
+                      border: "1px solid var(--border-mid)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                    onFocus={e => (e.target.style.borderColor = "var(--amber)")}
+                    onBlur={e  => (e.target.style.borderColor = "var(--border-mid)")}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -215,7 +279,19 @@ export default function WeightChart({ todayIso }: Props) {
         <div className="px-5 pb-4 space-y-1">
           {[...entries].reverse().slice(0, 5).map((e) => (
             <div key={e.id} className="flex items-center justify-between text-xs group">
-              <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{e.date}</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{e.date}</span>
+                {e.bodyFatPct != null && (
+                  <span className="text-[10px]" style={{ color: "var(--coral)", fontFamily: "var(--font-mono)" }}>
+                    {e.bodyFatPct}% fat
+                  </span>
+                )}
+                {e.muscleMassKg != null && (
+                  <span className="text-[10px]" style={{ color: "var(--sky)", fontFamily: "var(--font-mono)" }}>
+                    {e.muscleMassKg}kg mus
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2">
                 <span
                   className="font-medium"

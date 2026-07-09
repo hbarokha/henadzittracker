@@ -2,6 +2,8 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 import type { NutritionFood } from "@/lib/gemini";
+import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
+import AmountStepper from "./AmountStepper";
 
 // BarcodeDetector is not in all TS lib.dom versions yet
 declare class BarcodeDetector {
@@ -58,6 +60,7 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
   const [food,     setFood]     = useState<NutritionFood | null>(null);
   const [meta,     setMeta]     = useState<ProductMeta | null>(null);
   const [qty,      setQty]      = useState(1);
+  const [amount,   setAmount]   = useState(100);
   const [adding,   setAdding]   = useState(false);
   const [scanHint, setScanHint] = useState("Point camera at barcode");
 
@@ -80,6 +83,7 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
       setFood(data.food);
       setMeta(data.meta);
       setQty(1);
+      setAmount(isWeighable(data.food) ? (data.food.amount as number) : 1);
       setPhase("result");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -150,10 +154,18 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
     setQty(1);
   }
 
+  // Weighable products rescale by grams/ml (quantity 1); others use the servings multiplier.
+  function effective(f: NutritionFood): { food: NutritionFood; quantity: number } {
+    return isWeighable(f)
+      ? { food: scaleFoodAmount(f, amount), quantity: 1 }
+      : { food: f, quantity: qty };
+  }
+
   async function handleAdd() {
     if (!food || adding) return;
+    const eff = effective(food);
     setAdding(true);
-    await onAdd(food, qty);
+    await onAdd(eff.food, eff.quantity);
     setAdding(false);
     reset();
   }
@@ -161,6 +173,8 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
   // ── Render ──────────────────────────────────────────────────────────────
 
   if (phase === "result" && food) {
+    const weighable = isWeighable(food);
+    const eff       = effective(food);
     return (
       <div className="p-4 flex flex-col gap-3">
         <div
@@ -179,14 +193,14 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
                 {meta.brand.toUpperCase()}
               </p>
             )}
-            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{food.serving}</p>
+            <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{weighable ? eff.food.serving : food.serving}</p>
 
             <div className="flex items-end justify-between mt-3">
               <div className="flex gap-3">
                 {[
-                  { l: "P", v: Math.round(food.protein * qty * 10) / 10, c: "var(--sky)"   },
-                  { l: "C", v: Math.round(food.carbs   * qty * 10) / 10, c: "var(--amber)" },
-                  { l: "F", v: Math.round(food.fat     * qty * 10) / 10, c: "var(--coral)" },
+                  { l: "P", v: Math.round(eff.food.protein * eff.quantity * 10) / 10, c: "var(--sky)"   },
+                  { l: "C", v: Math.round(eff.food.carbs   * eff.quantity * 10) / 10, c: "var(--amber)" },
+                  { l: "F", v: Math.round(eff.food.fat     * eff.quantity * 10) / 10, c: "var(--coral)" },
                 ].map(({ l, v, c }) => (
                   <span key={l} className="text-xs font-medium" style={{ fontFamily: "var(--font-mono)", color: c }}>
                     {l} {v}g
@@ -196,7 +210,7 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
               <div className="text-right">
                 <span className="text-2xl leading-none tabular"
                   style={{ fontFamily: "var(--font-hero)", color: accentColor }}>
-                  {Math.round(food.calories * qty)}
+                  {Math.round(eff.food.calories * eff.quantity)}
                 </span>
                 <span className="text-xs ml-1" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>KCAL</span>
               </div>
@@ -206,8 +220,14 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
 
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>QTY</span>
-            <Stepper value={qty} onChange={setQty} />
+            <span className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+              {weighable ? "AMT" : "QTY"}
+            </span>
+            {weighable ? (
+              <AmountStepper amount={amount} unit={food.unit as "g" | "ml"} onChange={setAmount} accentColor={accentColor} />
+            ) : (
+              <Stepper value={qty} onChange={setQty} />
+            )}
           </div>
           <div className="flex gap-2">
             <button onClick={reset}

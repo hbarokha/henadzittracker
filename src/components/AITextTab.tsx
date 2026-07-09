@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { NutritionFood } from "@/lib/gemini";
+import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
+import AmountStepper from "./AmountStepper";
 
 function Spinner() {
   return (
@@ -69,7 +71,7 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
       if (!res.ok) throw new Error(data.error ?? "Analysis failed");
       if (!data.foods?.length) throw new Error("No foods found. Try being more specific.");
       setResults(data.foods);
-      setQuantities(data.foods.map(() => 1));
+      setQuantities(data.foods.map((f: NutritionFood) => (isWeighable(f) ? (f.amount as number) : 1)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -81,9 +83,19 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
     setQuantities((prev) => prev.map((q, idx) => (idx === i ? v : q)));
   }
 
+  // For a weighable food, quantities[i] holds grams/ml → scale nutrition, quantity 1.
+  // Otherwise quantities[i] holds servings → base food × quantity.
+  function effective(food: NutritionFood, i: number): { food: NutritionFood; quantity: number } {
+    const v = quantities[i] ?? (isWeighable(food) ? (food.amount as number) : 1);
+    return isWeighable(food)
+      ? { food: scaleFoodAmount(food, v), quantity: 1 }
+      : { food, quantity: v };
+  }
+
   async function handleAddOne(food: NutritionFood, index: number) {
+    const eff = effective(food, index);
     setAddingIndex(index);
-    await onAdd(food, quantities[index] ?? 1);
+    await onAdd(eff.food, eff.quantity);
     setAddingIndex(null);
     setResults((prev) => prev?.filter((_, i) => i !== index) ?? null);
     setQuantities((prev) => prev.filter((_, i) => i !== index));
@@ -93,7 +105,8 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
     if (!results || addingAll) return;
     setAddingAll(true);
     for (let i = 0; i < results.length; i++) {
-      await onAdd(results[i], quantities[i] ?? 1);
+      const eff = effective(results[i], i);
+      await onAdd(eff.food, eff.quantity);
     }
     setAddingAll(false);
     setText("");
@@ -174,7 +187,11 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
             )}
           </div>
 
-          {results.map((food, i) => (
+          {results.map((food, i) => {
+            const weighable = isWeighable(food);
+            const eff       = effective(food, i);
+            const cal       = Math.round(eff.food.calories * eff.quantity);
+            return (
             <div
               key={i}
               className="rounded-xl px-3 py-3"
@@ -189,7 +206,7 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
                     {food.name}
                   </p>
                   <p className="text-xs truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
-                    {food.serving}
+                    {weighable ? eff.food.serving : food.serving}
                   </p>
                 </div>
                 <div className="text-right shrink-0">
@@ -197,7 +214,7 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
                     className="text-lg leading-none"
                     style={{ fontFamily: "var(--font-hero)", color: accentColor }}
                   >
-                    {Math.round(food.calories * (quantities[i] ?? 1))}
+                    {cal}
                   </p>
                   <p
                     className="text-[9px] mt-0.5"
@@ -211,22 +228,26 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
               <div className="flex items-center justify-between mt-2.5">
                 <div className="flex gap-3">
                   {[
-                    { label: "P", val: food.protein, color: "var(--sky)"   },
-                    { label: "C", val: food.carbs,   color: "var(--amber)" },
-                    { label: "F", val: food.fat,     color: "var(--coral)" },
+                    { label: "P", val: eff.food.protein, color: "var(--sky)"   },
+                    { label: "C", val: eff.food.carbs,   color: "var(--amber)" },
+                    { label: "F", val: eff.food.fat,     color: "var(--coral)" },
                   ].map(({ label, val, color }) => (
                     <span
                       key={label}
                       className="text-xs font-medium"
                       style={{ fontFamily: "var(--font-mono)", color }}
                     >
-                      {label} {Math.round(val * (quantities[i] ?? 1) * 10) / 10}g
+                      {label} {Math.round(val * eff.quantity * 10) / 10}g
                     </span>
                   ))}
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <Stepper value={quantities[i] ?? 1} onChange={(v) => setQty(i, v)} />
+                  {weighable ? (
+                    <AmountStepper amount={quantities[i] ?? (food.amount as number)} unit={food.unit as "g" | "ml"} onChange={(v) => setQty(i, v)} accentColor={accentColor} />
+                  ) : (
+                    <Stepper value={quantities[i] ?? 1} onChange={(v) => setQty(i, v)} />
+                  )}
                   <button
                     onClick={() => handleAddOne(food, i)}
                     disabled={busy}
@@ -248,7 +269,8 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

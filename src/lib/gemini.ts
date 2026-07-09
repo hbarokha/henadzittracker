@@ -8,6 +8,10 @@ export interface NutritionFood {
   protein: number;
   carbs: number;
   fat: number;
+  /** Numeric base amount the nutrition values correspond to (e.g. 150). */
+  amount?: number;
+  /** Unit for `amount` — "g" for solids, "ml" for liquids. Enables gram/ml rescaling. */
+  unit?: "g" | "ml";
 }
 
 export interface NutritionResult {
@@ -25,7 +29,7 @@ const NUTRITION_PROMPT = `You are a precise nutrition database. Analyze the food
 Return a JSON object with exactly this structure:
 {
   "foods": [
-    { "name": "food name", "serving": "portion description", "calories": 0, "protein": 0.0, "carbs": 0.0, "fat": 0.0 }
+    { "name": "food name", "serving": "portion description", "amount": 0, "unit": "g", "calories": 0, "protein": 0.0, "carbs": 0.0, "fat": 0.0 }
   ],
   "total": { "calories": 0, "protein": 0.0, "carbs": 0.0, "fat": 0.0 }
 }
@@ -34,6 +38,7 @@ Rules:
 - calories is an integer (kcal)
 - protein, carbs, fat are floats in grams rounded to one decimal place
 - serving describes the estimated portion in plain English (e.g. "150g", "1 cup", "1 medium")
+- amount is the numeric weight/volume (a number) that the nutrition values correspond to; unit is "g" for solid foods or "ml" for liquids/drinks. Always estimate a gram or ml amount even when the serving is described by count (e.g. "1 medium apple" → amount 180, unit "g")
 - List each distinct food item separately in foods[]
 - total must be the arithmetic sum of all foods[]
 - Use standard nutritional values for typical home-cooked or restaurant portions

@@ -87,11 +87,17 @@ export async function GET(req: Request) {
   // When no serving info exists we report per-100g figures (see kcal + perServing above),
   // so label it "100g" rather than a misleading "per serving".
   const serving = p.serving_size ?? (servingG ? `${servingG}g` : "100g");
+  // The macros above are computed for `baseAmount` of product; expose it so the client
+  // can rescale nutrition by grams/ml. Liquids (serving described in ml) → "ml", else "g".
+  const baseAmount = servingG ?? 100;
+  const unit: "g" | "ml" = /\bml\b/i.test(String(p.serving_size ?? "")) ? "ml" : "g";
 
   return NextResponse.json({
     food: {
       name,
       serving,
+      amount:   baseAmount,
+      unit,
       calories: Math.round(kcal),
       protein:  Math.round(perServing("proteins")       * 10) / 10,
       carbs:    Math.round(perServing("carbohydrates")   * 10) / 10,

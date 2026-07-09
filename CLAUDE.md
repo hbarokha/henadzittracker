@@ -9,6 +9,7 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 - Upload a meal photo or **take one with the device camera** → Gemini identifies all foods → confirm before logging
 - Scan a product barcode → Open Food Facts lookup → nutrition auto-filled
 - Choose a meal category (Breakfast / Lunch / Dinner / Snack) for every entry
+- **Adjust the amount in grams or ml** — AI/barcode foods carry a base `amount`+`unit` (Gemini estimates a gram/ml weight even for count-based servings; Open Food Facts supplies serving grams). An inline stepper (`AmountStepper`, scaling via `lib/foodScale.ts`) rescales calories + macros proportionally live before logging; count-only foods keep the 1–20 servings stepper
 - Circular calorie ring + full-width calorie progress bar (green → amber → red)
 - Macro breakdown cards (Protein / Carbs / Fat) with progress bars
 - Food log grouped by meal with colored category headers and accent borders
@@ -92,7 +93,7 @@ the official developer program is currently suspended as of 2024).
 - BMR (Basal Metabolic Rate) calculated via Mifflin-St Jeor formula
 - TDEE (Total Daily Energy Expenditure) derived from BMR × activity multiplier
 - Auto-suggest daily calorie goal from TDEE
-- Body weight log — track weight over time with trend line
+- Body weight log — track weight over time with trend line; **optional body composition** logged alongside each weight (body fat %, muscle mass, body water %, bone mass) via an expandable section in the Body Weight card, surfaced in the recent-entries list and fed into the AI health summary's BODY COMPOSITION section (merged with Garmin scale data)
 - BMI calculated and displayed with healthy-range indicator
 - Health goal is injected into every Gemini request (AI summary, supplement recommendations, supplement tips, supplement text identification)
 
@@ -451,6 +452,10 @@ docs/
   id: string;
   date: string;                          // "YYYY-MM-DD"
   weightKg: number;
+  bodyFatPct?: number;                   // optional manual body composition
+  muscleMassKg?: number;
+  bodyWaterPct?: number;
+  boneMassKg?: number;
   createdAt: string;
 }
 ```

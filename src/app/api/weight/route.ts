@@ -9,9 +9,18 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const { date, weightKg } = await req.json();
+  const { date, weightKg, bodyFatPct, muscleMassKg, bodyWaterPct, boneMassKg } = await req.json();
   const kg = Number(weightKg);
-  const entry = await addWeightEntry(date, kg);
+  const numOrUndef = (v: unknown) => {
+    const n = Number(v);
+    return v == null || v === "" || isNaN(n) ? undefined : n;
+  };
+  const entry = await addWeightEntry(date, kg, {
+    bodyFatPct:   numOrUndef(bodyFatPct),
+    muscleMassKg: numOrUndef(muscleMassKg),
+    bodyWaterPct: numOrUndef(bodyWaterPct),
+    boneMassKg:   numOrUndef(boneMassKg),
+  });
 
   // Keep profile weight in sync with the most recent logged weight
   const profile = await loadProfile();
