@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, type TimeOfDay, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceForRange, type TimeOfDay, type PlanItem } from "@/lib/supplements";
+import { shiftDate, dateRange } from "@/lib/summary/snapshots";
 
 const VALID_TIMES = new Set<string>(["morning", "afternoon", "evening", "any"]);
 function sanitizeTime(t: string | undefined): TimeOfDay {
@@ -23,7 +24,19 @@ export async function GET(req: Request) {
       s.timeOfDay = "any";
       await updateSupplement(s.id, { timeOfDay: "any" });
     }
-    return NextResponse.json({ supplements, log });
+    // Adherence badges for the daily checklist — same counts already computed for the
+    // AI summary prompt, just surfaced here too so the user can see them inline.
+    const weekDates = dateRange(shiftDate(date, -6), date);
+    const monthDates = dateRange(shiftDate(date, -29), date);
+    const suppIds = supplements.map((s) => s.id);
+    const [week, month] = await Promise.all([
+      suppIds.length ? getAdherenceForRange(suppIds, weekDates) : Promise.resolve({}),
+      suppIds.length ? getAdherenceForRange(suppIds, monthDates) : Promise.resolve({}),
+    ]);
+    return NextResponse.json({
+      supplements, log,
+      adherence: { week, weekDays: weekDates.length, month, monthDays: monthDates.length },
+    });
   }
   return NextResponse.json(await getAllSupplements());
 }

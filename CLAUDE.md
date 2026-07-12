@@ -123,6 +123,7 @@ the official developer program is currently suspended as of 2024).
 ### Trend Charts
 - **Biological-age trend** — every AI health summary upserts that day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`, ETag-safe `mutateJson`); `GET /api/bioage?days=90`; purple line chart on Overview showing latest estimate, delta vs chronological age, and change across recorded checks
 - **Body Battery trend** — `GET /api/garmin/bodybattery/trend?date=…&days=14` reads only the per-date Garmin cache files (never calls Garmin); Overview band chart between each day's low and high with charged/drained in the header
+- **Blood pressure trend** — `GET /api/garmin/bloodpressure/trend?date=…&days=30` reads only the per-date `bloodpressure` cache files (never calls Garmin); Overview line chart plotting systolic + diastolic over the last 30 days (days without a reading omitted, since BP is measured sparsely), latest reading with ACC/AHA category badge and pulse in the header
 
 ### Chat With Your Health Data
 - Conversational panel on the Overview tab — ask ad-hoc questions ("why was my HRV terrible on Tuesday?", "am I hitting my protein goal?")
@@ -216,6 +217,8 @@ src/
         epochs/route.ts             GET — 15-minute epoch blocks (steps + calories)
         trainingstatus/route.ts     GET — readiness score, acute/chronic load, HR zones
         bodybattery/trend/route.ts  GET — 14-day Body Battery trend from cached files only (no Garmin calls)
+        stress/trend/route.ts       GET — stress trend from cached files only (no Garmin calls)
+        bloodpressure/trend/route.ts GET — 30-day BP trend (systolic/diastolic/pulse) from cached files only (no Garmin calls)
       insights/route.ts             GET — deterministic supplement↔recovery correlations + Claude narration (Gemini fallback), cached per date
       bioage/route.ts               GET — biological-age history recorded by the AI summary
       ai/
@@ -245,6 +248,8 @@ src/
     WeightChart.tsx                 Body weight trend line chart
     BioAgeChart.tsx                 Biological-age trend line chart (fed by /api/bioage)
     BodyBatteryChart.tsx            14-day Body Battery low–high band chart (cache-only trend route)
+    StressChart.tsx                 Stress trend chart (cache-only trend route)
+    BloodPressureChart.tsx          30-day systolic/diastolic line chart with ACC/AHA category badge (cache-only trend route)
     CorrelationInsights.tsx         Supplement↔recovery correlation card — AI narrative + per-metric delta chips
     HealthChat.tsx                  Chat panel over the user's own health data (Claude tool use)
     GarminConnectModal.tsx          Email/password login form + session status

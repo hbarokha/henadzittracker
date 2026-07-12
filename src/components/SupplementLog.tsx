@@ -13,10 +13,31 @@ interface SupplementWithLog extends Supplement {
   taken: boolean;
 }
 
+interface Adherence { week: Record<string, number>; weekDays: number; month: Record<string, number>; monthDays: number }
+
+// Green ≥85%, amber ≥50%, coral below — mirrors the BP/battery chart color language.
+function adherenceColor(taken: number, total: number): string {
+  if (total === 0) return "var(--text-dim)";
+  const pct = taken / total;
+  if (pct >= 0.85) return "var(--sage)";
+  if (pct >= 0.5) return "var(--amber)";
+  return "var(--coral)";
+}
+
+// How many of the window's days actually existed for this supplement — a supplement
+// added yesterday shouldn't read as red just because it wasn't around for the other 6.
+function eligibleDays(createdAt: string, viewDate: string, windowDays: number): number {
+  const created = new Date(createdAt.slice(0, 10));
+  const viewed = new Date(viewDate);
+  const daysSinceCreated = Math.round((viewed.getTime() - created.getTime()) / 86_400_000) + 1;
+  return Math.min(windowDays, Math.max(daysSinceCreated, 1));
+}
+
 interface Props { date: string }
 
 export default function SupplementLog({ date }: Props) {
   const [items, setItems] = useState<SupplementWithLog[]>([]);
+  const [adherence, setAdherence] = useState<Adherence | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingSupps, setLoadingSupps] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -51,13 +72,14 @@ export default function SupplementLog({ date }: Props) {
     try {
       const res = await fetch(`/api/supplements?date=${date}`);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const body = await res.json() as { supplements: Supplement[]; log: SLog[] };
+      const body = await res.json() as { supplements: Supplement[]; log: SLog[]; adherence?: Adherence };
       const logMap = new Map(body.log.map((l) => [l.supplementId, l.taken]));
       setItems(body.supplements.map((s) => ({
         ...s,
         timeOfDay: VALID_TOD.has(s.timeOfDay) ? s.timeOfDay : "any",
         taken: logMap.get(s.id) ?? false,
       })));
+      setAdherence(body.adherence ?? null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -406,9 +428,21 @@ export default function SupplementLog({ date }: Props) {
                     fontFamily: "var(--font-display)",
                     fontStyle: s.name ? "normal" : "italic",
                   }}>{s.name || "⚠ Name missing — tap ✏ to fix"}</p>
-                  <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                    {s.brand ? <span className="uppercase tracking-wide mr-1.5" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
-                    {s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}
+                  <p className="text-xs flex items-center flex-wrap gap-x-1.5 gap-y-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                    {s.brand ? <span className="uppercase tracking-wide" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
+                    <span>{s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}</span>
+                    {adherence && (
+                      <span
+                        className="px-1.5 py-0.5 rounded"
+                        style={{
+                          fontSize: "0.6rem", background: "var(--bg-raised)",
+                          color: adherenceColor(adherence.week[s.id] ?? 0, eligibleDays(s.createdAt, date, adherence.weekDays)),
+                        }}
+                        title={`Taken ${adherence.week[s.id] ?? 0}/${adherence.weekDays} days in the last week · ${adherence.month[s.id] ?? 0}/${adherence.monthDays} in the last month`}
+                      >
+                        {adherence.week[s.id] ?? 0}/{adherence.weekDays}d
+                      </span>
+                    )}
                   </p>
                   {/* Tip guides the dose you haven't taken yet — once checked off it's
                       noise, so it collapses (still available via the ⓘ toggle) */}
@@ -446,7 +480,7 @@ export default function SupplementLog({ date }: Props) {
                         setEditingId(null);
                       }
                     }}
-                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded transition-all"
+                    className="p-1 rounded transition-all"
                     style={{ color: retakeId === s.id ? "#34d399" : "var(--text-dim)" }}
                     title="Add another dose"
                     aria-label={`Add another dose of ${s.name}`}
@@ -473,7 +507,7 @@ export default function SupplementLog({ date }: Props) {
                 {/* Delete */}
                 <button
                   onClick={() => remove(s.id)}
-                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded transition-all"
+                  className="p-1 rounded transition-all"
                   style={{ color: "var(--text-dim)" }}
                   title="Remove"
                   aria-label={`Remove ${s.name || "supplement"}`}
