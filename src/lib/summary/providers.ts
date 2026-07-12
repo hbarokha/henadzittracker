@@ -188,12 +188,14 @@ const rawEffort = process.env.ANTHROPIC_SUMMARY_EFFORT || "medium";
 const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "medium") as
   "low" | "medium" | "high" | "xhigh" | "max";
 
-// Azure Static Web Apps' gateway kills API calls that run past its own timeout and
-// returns a plain-text "Backend call failure" body (not JSON), which crashes the
-// client's resp.json(). Opus with adaptive thinking can occasionally run long, so we
-// abort the Claude call ourselves well before that gateway limit and fall back to the
-// much faster Gemini path instead of letting the platform kill the whole request.
-const CLAUDE_TIMEOUT_MS = 90_000;
+// Azure Static Web Apps' gateway kills API calls that run past its own timeout (~100s,
+// not configurable) and returns a plain-text "Backend call failure" body (not JSON),
+// which crashes the client's resp.json(). Opus with adaptive thinking can occasionally
+// run long, so by default we abort the Claude call ourselves well before that gateway
+// limit and fall back to the much faster Gemini path instead of letting the platform
+// kill the whole request. Override via env when running somewhere without that ceiling
+// (e.g. local dev) so slower/larger analyses get to finish instead of always falling back.
+const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 90_000;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callClaudeJSON(system: string, prompt: string, apiKey: string): Promise<any> {
