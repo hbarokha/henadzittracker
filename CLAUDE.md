@@ -121,9 +121,11 @@ the official developer program is currently suspended as of 2024).
 - Overview card with per-metric delta chips (green = beneficial direction, hover shows the underlying averages) and the AI narrative
 
 ### Trend Charts
+- **Selectable window** — every Garmin trend chart (Sleep, Body Battery, Stress, Blood Pressure) has a shared 7D / 14D / 1M segmented control (`TrendRangeToggle.tsx`) in its header; defaults: 14 days (BP: 30)
+- **Sleep trend** — `GET /api/garmin/sleep/trend?date=…&days=…` reads only the per-date `sleep` cache files (never calls Garmin); Overview card with two stacked panels sharing one x-axis (never dual-axis): sleep-score line (violet, 60/80 band reference lines) on top, duration bars (sky, 8 h reference line) below; header shows latest score + hours with Garmin score-band coloring, deep/REM minutes of the latest night
 - **Biological-age trend** — every AI health summary upserts that day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`, ETag-safe `mutateJson`); `GET /api/bioage?days=90`; purple line chart on Overview showing latest estimate, delta vs chronological age, and change across recorded checks
-- **Body Battery trend** — `GET /api/garmin/bodybattery/trend?date=…&days=14` reads only the per-date Garmin cache files (never calls Garmin); Overview band chart between each day's low and high with charged/drained in the header
-- **Blood pressure trend** — `GET /api/garmin/bloodpressure/trend?date=…&days=30` reads only the per-date `bloodpressure` cache files (never calls Garmin); Overview line chart plotting systolic + diastolic over the last 30 days (days without a reading omitted, since BP is measured sparsely), latest reading with ACC/AHA category badge and pulse in the header
+- **Body Battery trend** — `GET /api/garmin/bodybattery/trend?date=…&days=…` reads only the per-date Garmin cache files (never calls Garmin); Overview band chart between each day's low and high with charged/drained in the header
+- **Blood pressure trend** — `GET /api/garmin/bloodpressure/trend?date=…&days=…` reads only the per-date `bloodpressure` cache files (never calls Garmin); Overview line chart plotting systolic + diastolic (days without a reading omitted, since BP is measured sparsely), latest reading with ACC/AHA category badge and pulse in the header
 
 ### Chat With Your Health Data
 - Conversational panel on the Overview tab — ask ad-hoc questions ("why was my HRV terrible on Tuesday?", "am I hitting my protein goal?")
@@ -207,7 +209,7 @@ src/
         sleep/route.ts              GET — sleep stages, score, SpO2, respiration
         activities/route.ts         GET — list of workouts with full metrics
         bodycomp/route.ts           GET — weight, BMI, body fat, muscle mass
-        usermetrics/route.ts        GET — VO2 max, fitness age, training status
+        usermetrics/route.ts        GET — VO2 max (maxmet service) + fitness age, cached per date
         hrv/route.ts                GET — nightly HRV, weekly avg, status
         stress/route.ts             GET — avg/max stress, stress timeline
         bodybattery/route.ts        GET — current/high/low/charged/drained
@@ -216,9 +218,10 @@ src/
         bloodpressure/route.ts      GET — BP readings (systolic/diastolic/pulse) + day average
         epochs/route.ts             GET — 15-minute epoch blocks (steps + calories)
         trainingstatus/route.ts     GET — readiness score, acute/chronic load, HR zones
-        bodybattery/trend/route.ts  GET — 14-day Body Battery trend from cached files only (no Garmin calls)
+        bodybattery/trend/route.ts  GET — Body Battery trend from cached files only (no Garmin calls)
         stress/trend/route.ts       GET — stress trend from cached files only (no Garmin calls)
-        bloodpressure/trend/route.ts GET — 30-day BP trend (systolic/diastolic/pulse) from cached files only (no Garmin calls)
+        bloodpressure/trend/route.ts GET — BP trend (systolic/diastolic/pulse) from cached files only (no Garmin calls)
+        sleep/trend/route.ts        GET — sleep score + duration trend from cached files only (no Garmin calls)
       insights/route.ts             GET — deterministic supplement↔recovery correlations + Claude narration (Gemini fallback), cached per date
       bioage/route.ts               GET — biological-age history recorded by the AI summary
       ai/
@@ -247,9 +250,11 @@ src/
     SupplementPlanner.tsx           Weekly plan screen — history candidates with suggested pre-selection, per-row editable dose/unit/pills/time, apply-suggestion-or-choose-own, "Apply plan" reconciles the active stack
     WeightChart.tsx                 Body weight trend line chart
     BioAgeChart.tsx                 Biological-age trend line chart (fed by /api/bioage)
-    BodyBatteryChart.tsx            14-day Body Battery low–high band chart (cache-only trend route)
-    StressChart.tsx                 Stress trend chart (cache-only trend route)
-    BloodPressureChart.tsx          30-day systolic/diastolic line chart with ACC/AHA category badge (cache-only trend route)
+    BodyBatteryChart.tsx            Body Battery low–high band chart (cache-only trend route, 7D/14D/1M)
+    SleepChart.tsx                  Sleep score line + duration bars, stacked panels (cache-only trend route, 7D/14D/1M)
+    StressChart.tsx                 Stress trend chart (cache-only trend route, 7D/14D/1M)
+    BloodPressureChart.tsx          Systolic/diastolic line chart with ACC/AHA category badge (cache-only trend route, 7D/14D/1M)
+    TrendRangeToggle.tsx            Shared 7D / 14D / 1M segmented control for the trend charts
     CorrelationInsights.tsx         Supplement↔recovery correlation card — AI narrative + per-metric delta chips
     HealthChat.tsx                  Chat panel over the user's own health data (Claude tool use)
     GarminConnectModal.tsx          Email/password login form + session status
@@ -435,19 +440,13 @@ docs/
 }
 ```
 
-### Garmin user metrics cache
+### Garmin user metrics cache (YYYY-MM-DD-usermetrics.json)
 ```ts
 {
   date: string;
-  vo2MaxRunning: number | null;
+  vo2MaxRunning: number | null;   // maxmet/latest — device-derived, falls back to user-entered settings
   vo2MaxCycling: number | null;
-  fitnessAge: number | null;
-  trainingStatus: "peaking" | "maintaining" | "productive" | "recovering" |
-                  "unproductive" | "detraining" | "overreaching" | null;
-  racePrediction5k: number | null;       // seconds
-  racePrediction10k: number | null;
-  racePredictionHalf: number | null;
-  racePredictionMarathon: number | null;
+  fitnessAge: number | null;      // fitnessage-service stats (≤28-day range), values.fitnessAge
   syncedAt: string;
 }
 ```
@@ -591,4 +590,5 @@ Activity multipliers:
 - [x] **Supplement AI dosage & overlap awareness** — shared `stackLine()` (total daily dose = dose × pills) and `DOSAGE_OVERLAP_RULES` injected into all four supplement AI actions; recommend/tips also get stress, training status, body comp, blood pressure, weight trend, 7-day adherence, and 7-day fat/protein averages; garmin cache reads fall back to yesterday when today isn't synced yet; AI summary supplement rules upgraded to require dose-adequacy checks and cross-product cumulative totals
 - [x] **AI summary quality overhaul** — real user macro goals sent from client (were hardcoded 150/250/65 defaults); precomputed week-vs-prior-week deltas + month momentum (last 15 vs first 15 days); per-day 7-day breakdown table in prompt; coach memory via `summary-cache/latest.json` (previous scores/bio-age/recommendations fed back with continuity + follow-up rules); Gemini `responseSchema` structured output + temperature 0.2; retry with backoff → `flash-lite` fallback on 429/5xx; hash-based cache invalidation (regenerate only when data changed, 15-min instant-serve window) replacing the 1h/12h TTL; deterministic data-coverage badges (food/sleep/steps/HRV per 7 days) in the panel; single 30-day snapshot pass eliminating duplicate cache reads
 - [x] **AI health summary on Claude** — summary route now calls Claude (`claude-opus-4-8` default, `ANTHROPIC_SUMMARY_MODEL` override) via `@anthropic-ai/sdk` with adaptive thinking + `output_config.format` structured output (standard JSON Schema, `additionalProperties:false`), streamed; `generateSummary()` dispatcher tries Claude first and auto-falls back to Gemini if `ANTHROPIC_API_KEY` is unset or the Claude call throws; all other AI routes stay on Gemini
+- [x] **Sleep trend chart + selectable trend windows + real VO2 max in the AI summary (2026-07-15)** — cache-only `GET /api/garmin/sleep/trend` + `SleepChart.tsx` (score line over duration bars, stacked panels sharing one x-axis); shared `TrendRangeToggle` gives Sleep/Body Battery/Stress/BP charts a 7D/14D/1M window selector; `fetchUserMetrics(date)` rewritten — device-derived VO2 max now read from `metrics-service/metrics/maxmet/latest/{date}` (getUserSettings only carries user-entered values, which were null) + fitness age from `fitnessage-service/stats/daily` (≤28-day range limit, value nested under `values.fitnessAge`), cached per date like every other section, fetched by the sync route; the AI summary previously read a `usermetrics` cache that was never written — it now gets real VO2 max/fitness age with a 7-day-lookback fallback
 - [x] **Weekly supplement planner** — `getSupplementHistory()` (dedupes full library by name+brand, recent-14-day adherence, suggests active-or-recently-taken) + `applyWeeklyPlan()` (reconciles active stack, reuses ids to preserve adherence linkage) in `lib/supplements.ts`; `GET ?plan=1` / `POST action=plan` route actions; `SupplementPlanner.tsx` screen with Daily-log/Weekly-plan toggle in the Supplements tab; per-row apply-suggestion-or-edit; malformed history entries (missing name) skipped defensively

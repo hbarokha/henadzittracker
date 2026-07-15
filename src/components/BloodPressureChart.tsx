@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 
 interface BPRow {
   date: string;
@@ -19,19 +20,20 @@ function bpCategory(sys: number, dia: number): { label: string; color: string } 
 }
 
 // Blood-pressure history from cached Garmin readings (no live calls). BP is measured
-// sparsely, so a 30-day window is used and days without a reading are omitted.
+// sparsely, so the window defaults to 30 days and days without a reading are omitted.
 export default function BloodPressureChart({ date }: { date: string }) {
   const [rows, setRows] = useState<BPRow[]>([]);
+  const [days, setDays] = useState<TrendDays>(30);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setLoaded(false);
-    fetch(`/api/garmin/bloodpressure/trend?date=${date}&days=30`)
+    fetch(`/api/garmin/bloodpressure/trend?date=${date}&days=${days}`)
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setRows(data); })
       .catch(() => {})
       .finally(() => setLoaded(true));
-  }, [date]);
+  }, [date, days]);
 
   const latest = rows[rows.length - 1];
   const cat = latest ? bpCategory(latest.systolic, latest.diastolic) : null;
@@ -49,12 +51,12 @@ export default function BloodPressureChart({ date }: { date: string }) {
 
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-3">
+      <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-3 min-w-0">
           <span className="text-lg">🩺</span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
-              Blood Pressure
+              Blood Pressure — {trendRangeLabel(days)}
             </h3>
             {latest && (
               <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
@@ -65,6 +67,8 @@ export default function BloodPressureChart({ date }: { date: string }) {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-3 shrink-0">
+        <TrendRangeToggle value={days} onChange={setDays} />
         {latest && cat && (
           <div className="text-right shrink-0">
             <div className="flex items-baseline gap-1 justify-end">
@@ -78,6 +82,7 @@ export default function BloodPressureChart({ date }: { date: string }) {
             </p>
           </div>
         )}
+        </div>
       </div>
 
       {n > 1 ? (
@@ -111,8 +116,8 @@ export default function BloodPressureChart({ date }: { date: string }) {
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             {loaded
               ? latest
-                ? "One reading in the last 30 days — the trend line appears with a second measurement."
-                : "No blood-pressure readings in the last 30 days. Measure with a Garmin Index BPM or log one in Garmin Connect."
+                ? `One reading in the last ${days} days — the trend line appears with a second measurement.`
+                : `No blood-pressure readings in the last ${days} days. Measure with a Garmin Index BPM or log one in Garmin Connect.`
               : "Loading…"}
           </p>
         </div>

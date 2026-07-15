@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 
 interface StressRow {
   date: string;
@@ -23,19 +24,21 @@ function stressLabel(v: number): string {
   return "High";
 }
 
-// 14-day stress trend — average daily stress from cached Garmin data (no live calls).
+// Stress trend — average daily stress from cached Garmin data (no live calls).
+// Window selectable: 7 / 14 / 30 days.
 export default function StressChart({ date }: { date: string }) {
   const [rows, setRows] = useState<StressRow[]>([]);
+  const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setLoaded(false);
-    fetch(`/api/garmin/stress/trend?date=${date}&days=14`)
+    fetch(`/api/garmin/stress/trend?date=${date}&days=${days}`)
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setRows(data); })
       .catch(() => {})
       .finally(() => setLoaded(true));
-  }, [date]);
+  }, [date, days]);
 
   const latest = rows[rows.length - 1];
   const currentVal = latest?.avg ?? null;
@@ -56,12 +59,12 @@ export default function StressChart({ date }: { date: string }) {
 
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-3">
+      <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-3 min-w-0">
           <span className="text-lg">🧠</span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
-              Stress — 14 Days
+              Stress — {trendRangeLabel(days)}
             </h3>
             {latest && (
               <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
@@ -71,6 +74,8 @@ export default function StressChart({ date }: { date: string }) {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-3 shrink-0">
+        <TrendRangeToggle value={days} onChange={setDays} />
         {/* Current daily average + qualifier */}
         {currentVal != null && (
           <div className="text-right shrink-0">
@@ -85,6 +90,7 @@ export default function StressChart({ date }: { date: string }) {
             </p>
           </div>
         )}
+        </div>
       </div>
 
       {pts.length > 1 ? (

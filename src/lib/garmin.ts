@@ -438,8 +438,10 @@ export interface GarminBodyComp {
 }
 
 export interface GarminUserMetrics {
+  date: string;
   vo2MaxRunning: number | null;
   vo2MaxCycling: number | null;
+  fitnessAge: number | null;
   syncedAt: string;
 }
 
@@ -630,19 +632,68 @@ export async function fetchBodyComp(
   }
 }
 
-export async function fetchUserMetrics(): Promise<GarminUserMetrics | null> {
+// Account-level metrics (VO2 max, fitness age) cached per date so the AI summary
+// and chat can read them from the cache files like every other Garmin section.
+// Device-derived VO2 max lives in the maxmet metrics service (getUserSettings only
+// carries user-entered values), reported per activity day — so a 30-day window is
+// queried and the most recent value used.
+export async function fetchUserMetrics(date: string = isoToday()): Promise<GarminUserMetrics | null> {
+  if (!(await shouldFetch(date, "usermetrics")))
+    return readCache<GarminUserMetrics>(date, "usermetrics");
   const gc = await getClient();
-  if (!gc) return null;
+  if (!gc) return readCache<GarminUserMetrics>(date, "usermetrics");
+
+  // fitnessage-service rejects ranges of 29+ days
+  const start = (() => {
+    const [y, m, d] = date.split("-").map(Number);
+    const dt = new Date(y, m - 1, d - 27);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  })();
+
+  let vo2MaxRunning: number | null = null;
+  let vo2MaxCycling: number | null = null;
+  let fitnessAge: number | null = null;
+  let gotAny = false;
+
   try {
-    const settings = await gc.getUserSettings();
-    return {
-      vo2MaxRunning: (settings.userData?.vo2MaxRunning as number) ?? null,
-      vo2MaxCycling: (settings.userData?.vo2MaxCycling as number) ?? null,
-      syncedAt: new Date().toISOString(),
-    };
-  } catch {
-    return null;
+    // "latest" returns the last device-derived VO2 max regardless of activity recency
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw: any = await gc.get(`${GC_API}/metrics-service/metrics/maxmet/latest/${date}`);
+    vo2MaxRunning = raw?.generic?.vo2MaxPreciseValue ?? raw?.generic?.vo2MaxValue ?? null;
+    vo2MaxCycling = raw?.cycling?.vo2MaxPreciseValue ?? raw?.cycling?.vo2MaxValue ?? null;
+    gotAny = true;
+  } catch {}
+
+  if (vo2MaxRunning == null && vo2MaxCycling == null) {
+    try {
+      // user-entered values from profile settings, as a last resort
+      const settings = await gc.getUserSettings();
+      vo2MaxRunning = (settings.userData?.vo2MaxRunning as number) ?? null;
+      vo2MaxCycling = (settings.userData?.vo2MaxCycling as number) ?? null;
+      gotAny = true;
+    } catch {}
   }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fa: any = await gc.get(`${GC_API}/fitnessage-service/stats/daily/${start}/${date}`);
+    // shape: [{ calendarDate, values: { fitnessAge, achievableFitnessAge, rhr, bmi } }]
+    const last = Array.isArray(fa) ? fa.filter((e) => e?.values?.fitnessAge != null).pop() : null;
+    fitnessAge = last?.values?.fitnessAge != null ? Math.round(last.values.fitnessAge * 10) / 10 : null;
+    gotAny = true;
+  } catch {}
+
+  if (!gotAny) return readCache<GarminUserMetrics>(date, "usermetrics");
+
+  const result: GarminUserMetrics = {
+    date,
+    vo2MaxRunning,
+    vo2MaxCycling,
+    fitnessAge,
+    syncedAt: new Date().toISOString(),
+  };
+  await writeCache(date, "usermetrics", result);
+  return result;
 }
 
 export async function fetchSteps(date: string): Promise<number | null> {

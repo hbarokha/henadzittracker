@@ -16,6 +16,7 @@ import GarminConnectModal from "@/components/GarminConnectModal";
 import HealthSummaryPanel from "@/components/HealthSummaryPanel";
 import BioAgeChart     from "@/components/BioAgeChart";
 import BodyBatteryChart from "@/components/BodyBatteryChart";
+import SleepChart      from "@/components/SleepChart";
 import StressChart     from "@/components/StressChart";
 import BloodPressureChart from "@/components/BloodPressureChart";
 import CorrelationInsights from "@/components/CorrelationInsights";
@@ -571,6 +572,7 @@ export default function Home() {
             <section>
               <SectionHead label="Trends" />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                {garminStatus?.connected && <SleepChart date={selectedDate} />}
                 {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
                 {garminStatus?.connected && <StressChart date={selectedDate} />}
                 {garminStatus?.connected && <BloodPressureChart date={selectedDate} />}

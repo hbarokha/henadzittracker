@@ -20,6 +20,23 @@ interface CachedSummary {
 
 type TimeBracket = "morning" | "afternoon" | "evening" | "night";
 
+// VO2 max / fitness age are account-level and change slowly — if the selected
+// date has no usermetrics cache yet, fall back to the most recent one within a week.
+interface UserMetricsCache {
+  vo2MaxRunning: number | null;
+  vo2MaxCycling: number | null;
+  fitnessAge?: number | null;
+  trainingStatus?: string | null;
+}
+
+async function readUserMetricsWithFallback(date: string): Promise<UserMetricsCache | null> {
+  for (let i = 0; i <= 7; i++) {
+    const m = await readGarminCache<UserMetricsCache>(shiftDate(date, -i), "usermetrics");
+    if (m) return m;
+  }
+  return null;
+}
+
 function timeBracketFromHour(h: number): TimeBracket {
   if (h >= 5  && h < 12) return "morning";
   if (h >= 12 && h < 18) return "afternoon";
@@ -100,7 +117,7 @@ export async function POST(req: Request) {
   const [monSnaps, todayBodyComp, userMetrics] = await Promise.all([
     buildSnapshots(monDates, allEntries),
     readGarminCache<{ weightKg: number | null; bmi: number | null; bodyFatPct: number | null; muscleMassKg: number | null; bodyWaterPct: number | null }>(today, "bodycomp"),
-    readGarminCache<{ vo2MaxRunning: number | null; vo2MaxCycling: number | null; fitnessAge: number | null; trainingStatus: string | null }>(today, "usermetrics"),
+    readUserMetricsWithFallback(today),
   ]);
 
   const todaySnap     = monSnaps[monSnaps.length - 1];

@@ -195,7 +195,7 @@ const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "mediu
 // limit and fall back to the much faster Gemini path instead of letting the platform
 // kill the whole request. Override via env when running somewhere without that ceiling
 // (e.g. local dev) so slower/larger analyses get to finish instead of always falling back.
-const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 90_000;
+const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 240_000;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callClaudeJSON(system: string, prompt: string, apiKey: string): Promise<any> {

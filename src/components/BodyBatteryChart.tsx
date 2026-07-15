@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 
 interface BatteryRow {
   date: string;
@@ -17,20 +18,21 @@ function batteryColor(v: number): string {
   return "var(--coral)";
 }
 
-// 14-day Body Battery trend — band between daily low and high, from cached
-// Garmin data only (no live Garmin calls).
+// Body Battery trend — band between daily low and high, from cached Garmin
+// data only (no live Garmin calls). Window selectable: 7 / 14 / 30 days.
 export default function BodyBatteryChart({ date }: { date: string }) {
   const [rows, setRows] = useState<BatteryRow[]>([]);
+  const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setLoaded(false);
-    fetch(`/api/garmin/bodybattery/trend?date=${date}&days=14`)
+    fetch(`/api/garmin/bodybattery/trend?date=${date}&days=${days}`)
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setRows(data); })
       .catch(() => {})
       .finally(() => setLoaded(true));
-  }, [date]);
+  }, [date, days]);
 
   const latest = rows[rows.length - 1];
   // Most-recent level to display as a gauge — prefer today's live "current", else fall
@@ -55,12 +57,12 @@ export default function BodyBatteryChart({ date }: { date: string }) {
 
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
-      <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-3">
+      <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="flex items-center gap-3 min-w-0">
           <span className="text-lg">🔋</span>
-          <div>
+          <div className="min-w-0">
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
-              Body Battery — 14 Days
+              Body Battery — {trendRangeLabel(days)}
             </h3>
             {latest && (
               <p className="text-xs" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
@@ -71,6 +73,8 @@ export default function BodyBatteryChart({ date }: { date: string }) {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-3 shrink-0">
+        <TrendRangeToggle value={days} onChange={setDays} />
         {/* Current level gauge — the number the user asked to see */}
         {currentVal != null && (
           <div className="text-right shrink-0">
@@ -85,6 +89,7 @@ export default function BodyBatteryChart({ date }: { date: string }) {
             </p>
           </div>
         )}
+        </div>
       </div>
 
       {n > 1 ? (
