@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { Goals } from "@/lib/goals";
+import { IconPill, IconDna, IconCalendar, IconTrendingUp, IconBars } from "@/components/icons";
 
 interface SummarySection {
   score: number;
@@ -105,7 +106,7 @@ function ScoreRing({ score }: { score: number }) {
 }
 
 function SectionCard({ label, icon, data, defaultOpen }: {
-  label: string; icon: string; data: SummarySection; defaultOpen?: boolean;
+  label: string; icon: React.ReactNode; data: SummarySection; defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const c = scoreColor(data.score);
@@ -115,7 +116,7 @@ function SectionCard({ label, icon, data, defaultOpen }: {
         <ScoreRing score={data.score} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-sm">{icon}</span>
+            <span style={{ color: "var(--text-muted)" }}>{icon}</span>
             <span className="text-[10px] font-semibold uppercase tracking-wide"
               style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{label}</span>
             <span className="text-xs font-bold ml-auto tabular-nums"
@@ -182,7 +183,7 @@ function SupplementCard({ data }: { data: SupplementAnalysis }) {
       <button onClick={() => setOpen(v => !v)}
         className="w-full flex items-center justify-between px-4 py-3 text-left">
         <div className="flex items-center gap-2">
-          <span className="text-base">💊</span>
+          <IconPill className="w-4 h-4" style={{ color: "var(--violet)" }} />
           <span className="text-sm font-semibold" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>
             Supplement Analysis
           </span>
@@ -262,7 +263,7 @@ function BioAgeCard({ data }: { data: BiologicalAge }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-sm">🧬</span>
+            <IconDna className="w-3.5 h-3.5" style={{ color: accentColor }} />
             <span className="text-[10px] font-semibold uppercase tracking-wide"
               style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Biological Age</span>
             <span className="text-xs font-bold ml-auto tabular-nums px-2 py-0.5 rounded-full"
@@ -486,7 +487,7 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
       {/* Idle */}
       {!loading && !summary && !error && (
         <div className="px-5 py-8 text-center space-y-2">
-          <p className="text-3xl">🧬</p>
+          <IconDna className="w-8 h-8 mx-auto" style={{ color: "var(--violet)" }} />
           <p className="text-sm font-medium" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>
             Get your personalized health analysis
           </p>
@@ -555,9 +556,9 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
             <BioAgeCard data={summary.biologicalAge} />
           )}
 
-          <SectionCard label="Today"       icon="📅" data={summary.today} defaultOpen />
-          <SectionCard label="Last 7 Days" icon="📈" data={summary.week} />
-          <SectionCard label="Last 30 Days" icon="🗓️" data={summary.month} />
+          <SectionCard label="Today"       icon={<IconCalendar className="w-4 h-4" />} data={summary.today} defaultOpen />
+          <SectionCard label="Last 7 Days" icon={<IconTrendingUp className="w-4 h-4" />} data={summary.week} />
+          <SectionCard label="Last 30 Days" icon={<IconBars className="w-4 h-4" />} data={summary.month} />
 
           {summary.supplements && <SupplementCard data={summary.supplements} />}
 

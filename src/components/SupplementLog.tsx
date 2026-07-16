@@ -8,6 +8,7 @@ import {
   TIME_ORDER, VALID_TOD, TIME_LABELS, TIME_ICONS, TIME_CSS_COLORS,
   InfoBadge, TipBadge, SuggestionCard, postSupplement,
 } from "./supplements/shared";
+import { IconPill } from "@/components/icons";
 
 interface SupplementWithLog extends Supplement {
   taken: boolean;
@@ -235,7 +236,7 @@ export default function SupplementLog({ date }: Props) {
       {/* Header */}
       <div className="px-5 pt-4 pb-0 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="text-lg">💊</span>
+          <IconPill style={{ color: "var(--violet)" }} />
           <div>
             <h3 className="text-sm font-bold"
               style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>Supplements</h3>
@@ -357,7 +358,7 @@ export default function SupplementLog({ date }: Props) {
       {/* ── Empty state ──────────────────────────────────────────────────── */}
       {items.length === 0 && !showAdd && !showRecs && !loadingSupps && !loadError && (
         <div className="px-5 py-8 text-center space-y-4">
-          <p className="text-3xl">💊</p>
+          <IconPill className="w-8 h-8 mx-auto" style={{ color: "var(--violet)" }} />
           <div className="space-y-1">
             <p className="text-sm font-medium" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>
               No supplements tracked yet

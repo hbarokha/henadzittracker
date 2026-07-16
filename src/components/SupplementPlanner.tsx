@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
+import { IconCalendar, IconPill } from "@/components/icons";
 
 interface PlanCandidate {
   id: string;
@@ -187,7 +188,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
             style={{ background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
-            <span className="text-sm">🗓️</span>
+            <IconCalendar className="w-4 h-4" style={{ color: "var(--amber)" }} />
           </div>
           <div className="min-w-0">
             <h2 className="text-sm font-bold" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>Plan Next Week</h2>
@@ -227,7 +228,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
       {/* Empty state */}
       {!loading && rows.length === 0 && !error && (
         <div className="px-5 py-10 text-center space-y-2">
-          <p className="text-3xl">💊</p>
+          <IconPill className="w-8 h-8 mx-auto" style={{ color: "var(--violet)" }} />
           <p className="text-sm font-medium" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>No supplement history yet</p>
           <p className="text-xs max-w-sm mx-auto" style={{ color: "var(--text-dim)" }}>
             Add supplements from the Daily log tab, or start a plan with a new entry below.

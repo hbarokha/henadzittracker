@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import { IconHeartPulse } from "@/components/icons";
 
 interface BPRow {
   date: string;
@@ -21,7 +22,7 @@ function bpCategory(sys: number, dia: number): { label: string; color: string } 
 
 // Blood-pressure history from cached Garmin readings (no live calls). BP is measured
 // sparsely, so the window defaults to 30 days and days without a reading are omitted.
-export default function BloodPressureChart({ date }: { date: string }) {
+export default function BloodPressureChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
   const [rows, setRows] = useState<BPRow[]>([]);
   const [days, setDays] = useState<TrendDays>(30);
   const [loaded, setLoaded] = useState(false);
@@ -33,17 +34,17 @@ export default function BloodPressureChart({ date }: { date: string }) {
       .then((data) => { if (Array.isArray(data)) setRows(data); })
       .catch(() => {})
       .finally(() => setLoaded(true));
-  }, [date, days]);
+  }, [date, days, refreshKey]);
 
   const latest = rows[rows.length - 1];
   const cat = latest ? bpCategory(latest.systolic, latest.diastolic) : null;
 
-  const W = 320, H = 90, PAD = 8;
+  const W = 320, H = 90, PAD = 8, PADL = 26, PADR = 10;
   const n = rows.length;
   // Fixed 40–190 mmHg scale covers the full clinical range so systolic and diastolic
   // lines are always comparable across renders.
   const MIN = 40, MAX = 190;
-  const toX = (i: number) => PAD + (i / Math.max(n - 1, 1)) * (W - PAD * 2);
+  const toX = (i: number) => PADL + (i / Math.max(n - 1, 1)) * (W - PADL - PADR);
   const toY = (v: number) => PAD + ((MAX - v) / (MAX - MIN)) * (H - PAD * 2);
 
   const path = (key: "systolic" | "diastolic") =>
@@ -53,7 +54,7 @@ export default function BloodPressureChart({ date }: { date: string }) {
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-lg">🩺</span>
+          <IconHeartPulse style={{ color: "var(--coral)" }} />
           <div className="min-w-0">
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
               Blood Pressure — {trendRangeLabel(days)}
@@ -89,9 +90,14 @@ export default function BloodPressureChart({ date }: { date: string }) {
         <div className="px-5 pt-3 pb-1">
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
             {/* clinical reference lines: 120 systolic / 80 diastolic thresholds */}
-            {[80, 120].map((v) => (
-              <line key={v} x1={PAD} x2={W - PAD} y1={toY(v)} y2={toY(v)}
+            {[80, 120, 160].map((v) => (
+              <line key={v} x1={PADL} x2={W - PADR} y1={toY(v)} y2={toY(v)}
                 stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 4" />
+            ))}
+            {/* Y-axis mmHg labels on the clinical thresholds */}
+            {[80, 120, 160].map((v) => (
+              <text key={v} x={PADL - 5} y={toY(v) + 3} textAnchor="end"
+                fontSize="8" fill="var(--text-dim)" fontFamily="var(--font-mono)">{v}</text>
             ))}
             <path d={path("systolic")} fill="none" stroke="var(--coral)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             <path d={path("diastolic")} fill="none" stroke="var(--sky)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

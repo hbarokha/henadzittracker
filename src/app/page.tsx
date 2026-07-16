@@ -24,6 +24,7 @@ import HealthChat      from "@/components/HealthChat";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
+import { IconFlame, IconBolt } from "@/components/icons";
 
 type AppTab = "overview" | "nutrition" | "supplements" | "analysis";
 
@@ -214,6 +215,9 @@ export default function Home() {
   // boolean) so a date change invalidates it in the same render, and a stale in-flight
   // load for a previous date can never mark the current date as ready.
   const [garminLoadedDate, setGarminLoadedDate] = useState<string | null>(null);
+  // Bumped every time GarminDashboard finishes a (re)load — including after a Sync —
+  // so the cache-backed trend charts re-fetch instead of showing stale data.
+  const [garminRefreshKey, setGarminRefreshKey] = useState(0);
   const [globalLoading, setGlobalLoading] = useState(false);
 
   const isToday = selectedDate === todayIso;
@@ -401,7 +405,7 @@ export default function Home() {
           <div className="flex items-center gap-2 shrink-0">
             {stats && stats.streak > 0 && (
               <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg" style={{ background: "var(--bg-raised)", border: "1px solid var(--border-mid)" }}>
-                <span className="text-sm">🔥</span>
+                <IconFlame className="w-3.5 h-3.5" style={{ color: "var(--amber)" }} />
                 <p className="text-sm font-semibold tabular" style={{ fontFamily: "var(--font-display)", color: "var(--amber)" }}>{stats.streak}</p>
                 <p className="text-[9px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>DAY</p>
               </div>
@@ -447,10 +451,10 @@ export default function Home() {
           <button
             onClick={goBack}
             aria-label="Previous day"
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors"
             style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
           >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -473,10 +477,10 @@ export default function Home() {
             onClick={goForward}
             disabled={isToday}
             aria-label="Next day"
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
+            className="w-9 h-9 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
             style={{ color: "var(--text-muted)", border: "1px solid var(--border)" }}
           >
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
           </button>
@@ -544,7 +548,7 @@ export default function Home() {
                   foodCalories={totals.calories}
                   onSyncStart={() => setGlobalLoading(true)}
                   onSyncEnd={() => setGlobalLoading(false)}
-                  onDataLoaded={(loadedDate) => setGarminLoadedDate(loadedDate)}
+                  onDataLoaded={(loadedDate) => { setGarminLoadedDate(loadedDate); setGarminRefreshKey((k) => k + 1); }}
                 />
               </section>
             ) : (
@@ -554,7 +558,7 @@ export default function Home() {
                   className="rounded-2xl p-6 text-center space-y-3"
                   style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
                 >
-                  <p className="text-3xl">⚡</p>
+                  <IconBolt className="w-8 h-8 mx-auto" style={{ color: "var(--amber)" }} />
                   <p className="text-sm font-medium" style={{ color: "var(--text)" }}>Connect Garmin for activity, sleep & recovery data</p>
                   <p className="text-xs" style={{ color: "var(--text-dim)" }}>Steps, HRV, sleep stages, Body Battery, stress and more</p>
                   <button
@@ -572,10 +576,10 @@ export default function Home() {
             <section>
               <SectionHead label="Trends" />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-                {garminStatus?.connected && <SleepChart date={selectedDate} />}
-                {garminStatus?.connected && <BodyBatteryChart date={selectedDate} />}
-                {garminStatus?.connected && <StressChart date={selectedDate} />}
-                {garminStatus?.connected && <BloodPressureChart date={selectedDate} />}
+                {garminStatus?.connected && <SleepChart date={selectedDate} refreshKey={garminRefreshKey} />}
+                {garminStatus?.connected && <BodyBatteryChart date={selectedDate} refreshKey={garminRefreshKey} />}
+                {garminStatus?.connected && <StressChart date={selectedDate} refreshKey={garminRefreshKey} />}
+                {garminStatus?.connected && <BloodPressureChart date={selectedDate} refreshKey={garminRefreshKey} />}
                 <BioAgeChart />
                 <WeightChart todayIso={todayIso} />
               </div>

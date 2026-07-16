@@ -62,6 +62,61 @@
   * {
     border-color: var(--border);
   }
+
+  /* Interactive elements get a pointer; disabled ones don't.
+     Tailwind Preflight does not set this — buttons here are bare <button>s. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  /* Kill the blue tap-flash on touch; we provide our own feedback. */
+  a, button, [role="button"], input, select, textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* ── Keyboard focus ring ─────────────────────────────────────────────────────
+   No visible focus indicator existed anywhere (WCAG 2.4.7). Use :focus-visible
+   so it shows for keyboard/AT users but not on mouse click, and box-shadow so it
+   never shifts layout and reads on any surface. */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+/* Inputs already have their own border; keep the ring tight to them. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  box-shadow: 0 0 0 2px var(--amber-glow);
+  border-color: var(--amber) !important;
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   Honor the OS "reduce motion" setting: near-instant transitions and no looping
+   animation (the indeterminate loading bar in particular). */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Keep the loading bar as a static, visible track instead of an empty one. */
+  .loading-bar-fill {
+    position: static;
+    width: 100%;
+    opacity: 0.5;
+  }
 }
 
 /* ── Typography utilities ───────────────────────────────────────────────── */

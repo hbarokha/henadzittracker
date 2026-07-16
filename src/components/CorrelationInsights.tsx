@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { IconBeaker } from "@/components/icons";
 
 interface MetricCorrelation {
   metric: string;
@@ -61,7 +62,7 @@ export default function CorrelationInsights({ date }: { date: string }) {
       {/* Header */}
       <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-3">
-          <span className="text-lg">🔬</span>
+          <IconBeaker style={{ color: "var(--mint)" }} />
           <div>
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
               Supplement Correlations

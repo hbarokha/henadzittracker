@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { IconDna } from "@/components/icons";
 
 interface BioAgeEntry {
   date: string;
@@ -29,12 +30,13 @@ export default function BioAgeChart() {
     ? +(latest.estimate - first.estimate).toFixed(1)
     : null;
 
-  const W = 320, H = 80, PAD = 8;
+  const W = 320, H = 80, PAD = 8, PADL = 24, PADR = 10;
   const vals = entries.map((e) => e.estimate);
   const minV = vals.length ? Math.min(...vals) - 1 : 20;
   const maxV = vals.length ? Math.max(...vals) + 1 : 60;
-  const toX = (i: number) => PAD + (i / Math.max(vals.length - 1, 1)) * (W - PAD * 2);
+  const toX = (i: number) => PADL + (i / Math.max(vals.length - 1, 1)) * (W - PADL - PADR);
   const toY = (v: number) => PAD + ((maxV - v) / (maxV - minV)) * (H - PAD * 2);
+  const yTicks = [maxV, (maxV + minV) / 2, minV];
 
   const linePath = vals.length > 1
     ? vals.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ")
@@ -47,7 +49,7 @@ export default function BioAgeChart() {
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-3">
-          <span className="text-lg">🧬</span>
+          <IconDna style={{ color: "var(--violet)" }} />
           <div>
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
               Biological Age
@@ -102,15 +104,21 @@ export default function BioAgeChart() {
                     <stop offset="100%" stopColor="#a78bfa" stopOpacity="0" />
                   </linearGradient>
                 </defs>
+                {/* Y-axis age labels */}
+                {yTicks.map((v, k) => (
+                  <text key={k} x={PADL - 5} y={toY(v) + 3} textAnchor="end"
+                    fontSize="8" fill="var(--text-dim)" fontFamily="var(--font-mono)">{Math.round(v)}</text>
+                ))}
                 <path d={areaPath} fill="url(#bag)" />
                 <path d={linePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 {vals.map((v, i) => (
                   <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="#a78bfa" />
                 ))}
               </svg>
-              <div className="flex justify-between pb-2"
+              <div className="flex justify-between pb-2 pl-5"
                 style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
                 <span>{entries[0]?.date.slice(5)}</span>
+                {entries.length > 2 && <span>{entries[Math.floor((entries.length - 1) / 2)]?.date.slice(5)}</span>}
                 <span>{entries[entries.length - 1]?.date.slice(5)}</span>
               </div>
             </>

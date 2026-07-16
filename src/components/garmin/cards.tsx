@@ -9,6 +9,10 @@ import type {
   GarminHRV, GarminStress, GarminBodyBattery, GarminRespiration, GarminSpO2,
   GarminEpochs, GarminTrainingStatus, GarminBloodPressure,
 } from "@/lib/garmin";
+import {
+  IconMoon, IconHeart, IconBolt, IconActivity, IconHeartPulse,
+  IconTarget, IconBars, IconScale,
+} from "@/components/icons";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,7 +118,7 @@ export function SleepCard({ data }: { data: GarminSleep }) {
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">🌙</span>
+          <IconMoon className="w-4 h-4" style={{ color: "var(--violet)" }} />
           <span className="text-sm font-semibold text-white">Sleep</span>
         </div>
         <div className="text-right">
@@ -166,7 +170,7 @@ export function HeartRateCard({ data, zones }: { data: GarminHeartRate; zones?: 
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">❤️</span>
+          <IconHeart className="w-4 h-4" style={{ color: "var(--coral)" }} />
           <span className="text-sm font-semibold text-white">Heart Rate</span>
         </div>
         {data.restingHeartRate && (
@@ -327,7 +331,7 @@ export function BodyBatteryCard({ data, fromSleep }: { data: GarminBodyBattery; 
       {/* Header row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">⚡</span>
+          <IconBolt className="w-4 h-4" style={{ color: "var(--sage)" }} />
           <div>
             <span className="text-sm font-semibold text-white">Body Battery</span>
             {fromSleep && (
@@ -466,7 +470,7 @@ export function StressCard({ data }: { data: GarminStress }) {
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">🧠</span>
+          <IconActivity className="w-4 h-4" style={{ color: "var(--amber)" }} />
           <span className="text-sm font-semibold text-white">Stress</span>
         </div>
         {data.avgStress != null && (
@@ -567,7 +571,7 @@ export function BloodPressureCard({ data }: { data: GarminBloodPressure }) {
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">🩺</span>
+          <IconHeartPulse className="w-4 h-4" style={{ color: "var(--coral)" }} />
           <span className="text-sm font-semibold text-white">Blood Pressure</span>
         </div>
         <span className="text-xs text-gray-400">
@@ -635,7 +639,7 @@ export function TrainingStatusCard({ data }: { data: GarminTrainingStatus }) {
   return (
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-base">🎯</span>
+        <IconTarget className="w-4 h-4" style={{ color: "var(--amber)" }} />
         <span className="text-sm font-semibold text-white">Training Status</span>
       </div>
 
@@ -703,7 +707,7 @@ export function EpochsCard({ data }: { data: GarminEpochs }) {
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-base">📊</span>
+          <IconBars className="w-4 h-4" style={{ color: "var(--sky)" }} />
           <span className="text-sm font-semibold text-white">Activity Timeline</span>
         </div>
         <span className="text-xs text-gray-400">{data.points.length} × 15min</span>
@@ -731,7 +735,7 @@ export function BodyCompCard({ data }: { data: GarminBodyComp }) {
   return (
     <div className="bg-gray-800/60 rounded-xl p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-base">⚖️</span>
+        <IconScale className="w-4 h-4" style={{ color: "var(--sage)" }} />
         <span className="text-sm font-semibold text-white">Body Composition</span>
       </div>
       <div className="grid grid-cols-2 gap-2">

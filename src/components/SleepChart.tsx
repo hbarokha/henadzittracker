@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import { IconMoon } from "@/components/icons";
 
 interface SleepRow {
   date: string;
@@ -27,7 +28,7 @@ function scoreLabel(v: number): string {
 // Sleep trend from cached Garmin data only (no live calls). Score and duration
 // are different scales, so they get two stacked panels sharing the same x-axis
 // (never a dual-axis chart): score line on top, duration bars below.
-export default function SleepChart({ date }: { date: string }) {
+export default function SleepChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
   const [rows, setRows] = useState<SleepRow[]>([]);
   const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
@@ -39,22 +40,22 @@ export default function SleepChart({ date }: { date: string }) {
       .then((data) => { if (Array.isArray(data)) setRows(data); })
       .catch(() => {})
       .finally(() => setLoaded(true));
-  }, [date, days]);
+  }, [date, days, refreshKey]);
 
   const latest = rows[rows.length - 1];
 
-  const W = 320, PAD = 8;
+  const W = 320, PAD = 8, PADL = 24, PADR = 10;
   const SCORE_H = 62;              // top panel: score line, 0–100
   const BAR_H = 34, BAR_TOP = SCORE_H + 6; // bottom panel: duration bars
   const H = BAR_TOP + BAR_H;
   const n = rows.length;
-  const toX = (i: number) => PAD + (i / Math.max(n - 1, 1)) * (W - PAD * 2);
+  const toX = (i: number) => PADL + (i / Math.max(n - 1, 1)) * (W - PADL - PADR);
   const toScoreY = (v: number) => PAD + ((100 - v) / 100) * (SCORE_H - PAD);
 
   // Duration scale: 0 → at least 9 h so the 8 h reference line always fits
   const maxHours = Math.max(9, ...rows.map((r) => r.hours ?? 0));
   const barH = (h: number) => (h / maxHours) * BAR_H;
-  const barW = Math.min(14, Math.max(3, (W - PAD * 2) / Math.max(n, 1) - 2));
+  const barW = Math.min(14, Math.max(3, (W - PADL - PADR) / Math.max(n, 1) - 2));
 
   const scorePts = rows
     .map((r, i) => ({ i, v: r.score }))
@@ -67,7 +68,7 @@ export default function SleepChart({ date }: { date: string }) {
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       <div className="px-5 py-4 flex items-center justify-between gap-3" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-3 min-w-0">
-          <span className="text-lg">😴</span>
+          <IconMoon style={{ color: "var(--violet)" }} />
           <div className="min-w-0">
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
               Sleep — {trendRangeLabel(days)}
@@ -105,8 +106,13 @@ export default function SleepChart({ date }: { date: string }) {
           <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
             {/* score reference lines at 60 / 80 (fair / good boundaries) */}
             {[60, 80].map((v) => (
-              <line key={v} x1={PAD} x2={W - PAD} y1={toScoreY(v)} y2={toScoreY(v)}
+              <line key={v} x1={PADL} x2={W - PADR} y1={toScoreY(v)} y2={toScoreY(v)}
                 stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 4" />
+            ))}
+            {/* score Y-axis labels */}
+            {[60, 80].map((v) => (
+              <text key={v} x={PADL - 5} y={toScoreY(v) + 3} textAnchor="end"
+                fontSize="8" fill="var(--text-dim)" fontFamily="var(--font-mono)">{v}</text>
             ))}
             <path d={scorePath} fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             {scorePts.map((p) => {
@@ -127,9 +133,11 @@ export default function SleepChart({ date }: { date: string }) {
             )}
 
             {/* duration panel — 8 h target reference line */}
-            <line x1={PAD} x2={W - PAD}
+            <line x1={PADL} x2={W - PADR}
               y1={BAR_TOP + BAR_H - barH(8)} y2={BAR_TOP + BAR_H - barH(8)}
               stroke="var(--border)" strokeWidth="0.5" strokeDasharray="3 4" />
+            <text x={PADL - 5} y={BAR_TOP + BAR_H - barH(8) + 3} textAnchor="end"
+              fontSize="8" fill="var(--text-dim)" fontFamily="var(--font-mono)">8h</text>
             {rows.map((r, i) => {
               if (r.hours == null) return null;
               const h = barH(r.hours);

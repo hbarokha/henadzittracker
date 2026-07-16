@@ -88,7 +88,7 @@ export default function DailySummary({ totals, goals, compact }: Props) {
               <div key={key} className="flex-1 rounded-lg px-2.5 py-2" style={{ background: "var(--bg-raised)", border: `1px solid ${isOver ? "rgba(255,107,107,0.35)" : "var(--border)"}` }}>
                 <p className="text-[8px] uppercase tracking-wider mb-1" style={{ fontFamily: "var(--font-mono)", color: c }}>{label}</p>
                 <p className="text-sm leading-none" style={{ fontFamily: "var(--font-hero)", color: isOver ? "var(--coral)" : "var(--text)" }}>{Math.round(val)}<span className="text-[9px] ml-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>g</span></p>
-                <div className="mt-1.5 h-px rounded-full overflow-hidden" style={{ background: "var(--border-mid)" }}>
+                <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-high)" }}>
                   <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, background: c, transition: "width 0.9s ease" }} />
                 </div>
               </div>
@@ -201,8 +201,8 @@ export default function DailySummary({ totals, goals, compact }: Props) {
           {/* Progress track */}
           <div>
             <div
-              className="h-0.5 rounded-full overflow-hidden"
-              style={{ background: "var(--bg-raised)" }}
+              className="h-1 rounded-full overflow-hidden"
+              style={{ background: "var(--bg-high)" }}
             >
               <div
                 className="h-full rounded-full"
@@ -281,8 +281,8 @@ export default function DailySummary({ totals, goals, compact }: Props) {
 
               {/* Thin progress */}
               <div
-                className="mt-2.5 h-px rounded-full overflow-hidden"
-                style={{ background: "var(--border-mid)" }}
+                className="mt-2.5 h-1 rounded-full overflow-hidden"
+                style={{ background: "var(--bg-high)" }}
               >
                 <div
                   className="h-full rounded-full"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { IconScale } from "@/components/icons";
 
 interface WeightEntry {
   id: string;
@@ -75,12 +76,13 @@ export default function WeightChart({ todayIso }: Props) {
   const prev = entries[entries.length - 2];
   const delta = latest && prev ? (latest.weightKg - prev.weightKg) : null;
 
-  const W = 320, H = 80, PAD = 8;
+  const W = 320, H = 80, PAD = 8, PADL = 30, PADR = 10;
   const vals = entries.map((e) => e.weightKg);
   const minV = vals.length ? Math.min(...vals) - 1 : 60;
   const maxV = vals.length ? Math.max(...vals) + 1 : 100;
-  const toX = (i: number) => PAD + (i / Math.max(vals.length - 1, 1)) * (W - PAD * 2);
+  const toX = (i: number) => PADL + (i / Math.max(vals.length - 1, 1)) * (W - PADL - PADR);
   const toY = (v: number) => PAD + ((maxV - v) / (maxV - minV)) * (H - PAD * 2);
+  const yTicks = [maxV, (maxV + minV) / 2, minV];
 
   const linePath = vals.length > 1
     ? vals.map((v, i) => `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`).join(" ")
@@ -100,7 +102,7 @@ export default function WeightChart({ todayIso }: Props) {
         style={{ borderBottom: "1px solid var(--border)" }}
       >
         <div className="flex items-center gap-3">
-          <span className="text-lg">⚖️</span>
+          <IconScale style={{ color: "var(--sage)" }} />
           <div>
             <h3
               className="text-sm font-bold"
@@ -245,6 +247,11 @@ export default function WeightChart({ todayIso }: Props) {
                 <stop offset="100%" stopColor="var(--sage)" stopOpacity="0" />
               </linearGradient>
             </defs>
+            {/* Y-axis weight labels (kg) */}
+            {yTicks.map((v, k) => (
+              <text key={k} x={PADL - 5} y={toY(v) + 3} textAnchor="end"
+                fontSize="8" fill="var(--text-dim)" fontFamily="var(--font-mono)">{v.toFixed(0)}</text>
+            ))}
             <path d={areaPath} fill="url(#wg)" />
             <path d={linePath} fill="none" stroke="var(--sage)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             {vals.map((v, i) => (
@@ -252,10 +259,11 @@ export default function WeightChart({ todayIso }: Props) {
             ))}
           </svg>
           <div
-            className="flex justify-between pb-2"
+            className="flex justify-between pb-2 pl-6"
             style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}
           >
             <span>{entries[0]?.date.slice(5)}</span>
+            {entries.length > 2 && <span>{entries[Math.floor((entries.length - 1) / 2)]?.date.slice(5)}</span>}
             <span>{entries[entries.length - 1]?.date.slice(5)}</span>
           </div>
         </div>
