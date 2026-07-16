@@ -197,44 +197,88 @@ const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "mediu
 // (e.g. local dev) so slower/larger analyses get to finish instead of always falling back.
 const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 240_000;
 
+// Fast mode (research preview): same Opus model at up to 2.5× output tokens/sec, at
+// premium pricing. Only Opus 4.7/4.8 support it — if the model is overridden to
+// something else (e.g. claude-sonnet-5) we silently run at standard speed instead of
+// erroring on every request. Disable with ANTHROPIC_SUMMARY_FAST=0.
+const FAST_MODE_MODELS = /^claude-opus-4-(7|8)/;
+const CLAUDE_FAST_MODE =
+  process.env.ANTHROPIC_SUMMARY_FAST !== "0" && FAST_MODE_MODELS.test(CLAUDE_SUMMARY_MODEL);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function callClaudeJSON(system: string, prompt: string, apiKey: string): Promise<any> {
   const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
-  const stream = client.messages.stream({
-    model: CLAUDE_SUMMARY_MODEL,
-    max_tokens: 16000,
-    // Adaptive thinking sharpens the bio-age/score reasoning; structured output keeps
-    // the final block valid JSON. Streaming avoids the Anthropic SDK's own long-request
-    // timeout at this max_tokens (the outer platform timeout is handled separately below).
-    thinking: { type: "adaptive" },
-    output_config: {
-      effort: CLAUDE_SUMMARY_EFFORT,
-      format: { type: "json_schema", schema: CLAUDE_SCHEMA },
-    },
-    // Static coach rules live in system with a cache breakpoint so back-to-back
-    // generations (manual ↺ refresh, bracket changes within 5 min) reuse the prefix.
-    // Note: Opus's minimum cacheable prefix is 4096 tokens — if the rules block is
-    // below that the marker is silently ignored, which is harmless.
-    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-    messages: [{ role: "user", content: prompt }],
-  });
+  // One wall-clock deadline shared across attempts so a fast→standard retry can't
+  // blow past the platform gateway timeout.
+  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
 
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      stream.abort();
-      reject(new Error(`Claude summary timed out after ${CLAUDE_TIMEOUT_MS / 1000}s`));
-    }, CLAUDE_TIMEOUT_MS);
-  });
+  const run = async (fast: boolean) => {
+    const params = {
+      model: CLAUDE_SUMMARY_MODEL,
+      max_tokens: 16000,
+      // Adaptive thinking sharpens the bio-age/score reasoning; structured output keeps
+      // the final block valid JSON. Streaming avoids the Anthropic SDK's own long-request
+      // timeout at this max_tokens (the outer platform timeout is handled separately below).
+      thinking: { type: "adaptive" as const },
+      output_config: {
+        effort: CLAUDE_SUMMARY_EFFORT,
+        format: { type: "json_schema" as const, schema: CLAUDE_SCHEMA },
+      },
+      // Static coach rules live in system with a cache breakpoint so back-to-back
+      // generations (manual ↺ refresh, bracket changes within 5 min) reuse the prefix.
+      // Note: Opus's minimum cacheable prefix is 4096 tokens — if the rules block is
+      // below that the marker is silently ignored, which is harmless.
+      system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }],
+      messages: [{ role: "user" as const, content: prompt }],
+    };
+    // Fast mode requires the beta messages endpoint + beta flag + top-level speed param.
+    // maxRetries: 0 on the fast attempt — fast mode has its own quota (orgs without
+    // access get an immediate 429), and the useful retry is the standard-speed
+    // fallback below, not the SDK re-sending the same fast request with backoff.
+    const stream = fast
+      ? client.beta.messages.stream(
+          { ...params, speed: "fast", betas: ["fast-mode-2026-02-01"] },
+          { maxRetries: 0 }
+        )
+      : client.messages.stream(params);
+
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        stream.abort();
+        reject(new Error(`Claude summary timed out after ${CLAUDE_TIMEOUT_MS / 1000}s`));
+      }, Math.max(1_000, deadline - Date.now()));
+    });
+    try {
+      return await Promise.race([stream.finalMessage(), timeout]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  };
+
   let msg;
   try {
-    msg = await Promise.race([stream.finalMessage(), timeout]);
-  } finally {
-    clearTimeout(timer!);
+    msg = await run(CLAUDE_FAST_MODE);
+  } catch (e) {
+    // Any fast-mode failure (429 from its separate quota — including orgs where fast
+    // mode isn't enabled yet and the limit is 0 — or a transient 5xx) retries once at
+    // standard speed if there's still meaningful time before the deadline; otherwise
+    // rethrow and let the Gemini fallback take over. A deadline timeout lands here
+    // with no time left, so it naturally rethrows instead of retrying.
+    if (CLAUDE_FAST_MODE && deadline - Date.now() > 20_000) {
+      console.warn("Claude fast mode failed, retrying at standard speed:", e instanceof Error ? e.message : e);
+      msg = await run(false);
+    } else {
+      throw e;
+    }
   }
 
   if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
-  const text = msg.content
+  // Beta (fast) and non-beta messages carry structurally identical text blocks, but TS
+  // can't call array methods on the BetaContentBlock[] | ContentBlock[] union.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const blocks = msg.content as any[];
+  const text = blocks
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .filter((b: any) => b.type === "text")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
