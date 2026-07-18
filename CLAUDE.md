@@ -181,7 +181,7 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 | `GEMINI_API_KEY`                  | Google Gemini API key — food/supplement AI + summary fallback  |
 | `ANTHROPIC_API_KEY`               | Anthropic (Claude) key — primary AI health summary provider (optional; falls back to Gemini) |
 | `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary + correlation narration (default `claude-opus-4-8`; e.g. `claude-sonnet-5`) |
-| `ANTHROPIC_SUMMARY_TIMEOUT_MS`    | Claude summary call timeout before aborting + falling back to Gemini (default `90000`ms; raise for local dev — production default stays under Azure SWA's ~100s gateway limit) |
+| `ANTHROPIC_SUMMARY_TIMEOUT_MS`    | Claude summary call timeout before aborting + falling back to Gemini (default `70000`ms — sized so the Gemini fallback still finishes under Azure SWA's ~100s gateway limit; raise only for local dev) |
 | `ANTHROPIC_SUMMARY_FAST`          | Fast mode for the Claude summary (default on when the model is Opus 4.7/4.8) — up to 2.5× output speed at premium token pricing; `0` disables. Fast-mode 429 retries once at standard speed |
 | `ANTHROPIC_CHAT_MODEL`            | Claude model for the health-data chat (default `claude-opus-4-8`)  |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage connection string (empty = local fs mode)   |

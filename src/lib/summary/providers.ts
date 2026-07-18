@@ -89,6 +89,9 @@ async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // A hung connection must not eat the whole platform gateway budget —
+          // abort and move to the next attempt instead.
+          signal: AbortSignal.timeout(25_000),
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
@@ -218,9 +221,12 @@ const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "mediu
 // which crashes the client's resp.json(). Opus with adaptive thinking can occasionally
 // run long, so by default we abort the Claude call ourselves well before that gateway
 // limit and fall back to the much faster Gemini path instead of letting the platform
-// kill the whole request. Override via env when running somewhere without that ceiling
-// (e.g. local dev) so slower/larger analyses get to finish instead of always falling back.
-const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 240_000;
+// kill the whole request. The default MUST leave the Gemini fallback (~15-25s) enough
+// room to finish inside the gateway window, or a slow Claude call fails the entire
+// request and the cache is never written — 70s + fallback ≈ 95s total. Override via env
+// only when running somewhere without that ceiling (e.g. local dev) so slower/larger
+// analyses get to finish instead of always falling back.
+const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 70_000;
 
 // Fast mode (research preview): same Opus model at up to 2.5× output tokens/sec, at
 // premium pricing. Only Opus 4.7/4.8 support it — if the model is overridden to
