@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconActivity } from "@/components/icons";
 
 interface StressRow {
@@ -129,6 +130,7 @@ export default function StressChart({ date, refreshKey }: { date: string; refres
                 now {latest.avg}
               </text>
             )}
+            <ExtremeLabels pts={pts} toX={toX} toY={toY} width={W} skip={[n - 1]} yMax={H - 2} />
           </svg>
           <div className="flex justify-between pb-2 pl-5"
             style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>

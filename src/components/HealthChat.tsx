@@ -48,6 +48,9 @@ export default function HealthChat({ date }: { date: string }) {
         throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
       }
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      // The route streams with status 200 committed up front — failures arrive
+      // as {"error": ...} in the body rather than a non-2xx status.
+      if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

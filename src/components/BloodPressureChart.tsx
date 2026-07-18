@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconHeartPulse } from "@/components/icons";
 
 interface BPRow {
@@ -107,6 +108,11 @@ export default function BloodPressureChart({ date, refreshKey }: { date: string;
                 <circle cx={toX(i)} cy={toY(r.diastolic)} r="2.5" fill="var(--sky)" />
               </g>
             ))}
+            {/* window extremes: highest systolic (▲) and lowest diastolic (▼) */}
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="max"
+              pts={rows.map((r, i) => ({ i, v: r.systolic }))} />
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="min" yMax={H - 2}
+              pts={rows.map((r, i) => ({ i, v: r.diastolic }))} />
           </svg>
           <div className="flex justify-between items-center pb-2">
             <span style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{rows[0]?.date.slice(5)}</span>

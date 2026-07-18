@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconScale } from "@/components/icons";
 
 interface WeightEntry {
@@ -257,6 +258,8 @@ export default function WeightChart({ todayIso }: Props) {
             {vals.map((v, i) => (
               <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="var(--sage)" />
             ))}
+            <ExtremeLabels pts={vals.map((v, i) => ({ i, v }))} toX={toX} toY={toY}
+              width={W} yMax={H - 2} format={(v) => v.toFixed(1)} />
           </svg>
           <div
             className="flex justify-between pb-2 pl-6"

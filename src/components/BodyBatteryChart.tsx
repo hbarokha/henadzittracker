@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconBattery } from "@/components/icons";
 
 interface BatteryRow {
@@ -128,6 +129,11 @@ export default function BodyBatteryChart({ date, refreshKey }: { date: string; r
                 </text>
               </>
             )}
+            {/* window extremes: best daily high (▲) and worst daily low (▼) */}
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="max" skip={[n - 1]}
+              pts={rows.map((r, i) => ({ i, v: r.highest })).filter((p): p is { i: number; v: number } => p.v != null)} />
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="min" skip={[n - 1]} yMax={H - 2}
+              pts={rows.map((r, i) => ({ i, v: r.lowest })).filter((p): p is { i: number; v: number } => p.v != null)} />
           </svg>
           <div className="flex justify-between pb-2 pl-5"
             style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>

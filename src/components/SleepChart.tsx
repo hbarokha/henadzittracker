@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconMoon } from "@/components/icons";
 
 interface SleepRow {
@@ -131,6 +132,9 @@ export default function SleepChart({ date, refreshKey }: { date: string; refresh
                 now {latest.score}
               </text>
             )}
+            {/* best / worst score in the window (clamped to the score panel) */}
+            <ExtremeLabels pts={scorePts} toX={toX} toY={toScoreY} width={W}
+              skip={[n - 1]} yMax={SCORE_H + 2} />
 
             {/* duration panel — 8 h target reference line */}
             <line x1={PADL} x2={W - PADR}

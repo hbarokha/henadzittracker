@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconDna } from "@/components/icons";
 
 interface BioAgeEntry {
@@ -114,6 +115,8 @@ export default function BioAgeChart() {
                 {vals.map((v, i) => (
                   <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="#a78bfa" />
                 ))}
+                <ExtremeLabels pts={vals.map((v, i) => ({ i, v }))} toX={toX} toY={toY}
+                  width={W} yMax={H - 2} />
               </svg>
               <div className="flex justify-between pb-2 pl-5"
                 style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>

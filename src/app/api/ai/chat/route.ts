@@ -15,8 +15,9 @@ import { readGarminCache, dateRange, buildSnapshots, summarizePeriod } from "@/l
 
 const CHAT_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-opus-4-8";
 const MAX_TOOL_ITERATIONS = 6;
-// Azure SWA's gateway kills long requests with a non-JSON "Backend call failure" —
-// finish (or fail cleanly) well before that.
+// Azure SWA's gateway kills silent API requests after ~45s ("Backend call failure").
+// The response is heartbeat-streamed (see the bottom of POST) so the connection stays
+// alive; this deadline bounds user waiting time, not the gateway.
 const DEADLINE_MS = 100_000;
 
 const GARMIN_SECTIONS = [
@@ -158,7 +159,10 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
   const convo: Anthropic.MessageParam[] = messages.map((m) => ({ role: m.role, content: m.content }));
   const deadline = Date.now() + DEADLINE_MS;
 
-  try {
+  // The agentic loop runs inside runChat(); its result is delivered over a
+  // heartbeat-streamed response so long tool loops survive the gateway's ~45s
+  // idle kill. Errors travel in-body as {"error": ...} on a 200.
+  const runChat = async (): Promise<Record<string, unknown>> => {
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const remaining = deadline - Date.now();
       if (remaining < 5_000) throw new Error("Chat took too long — try a narrower question");
@@ -190,14 +194,14 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
       }
 
       if (msg.stop_reason === "refusal")
-        return NextResponse.json({ reply: "I can't help with that question." });
+        return { reply: "I can't help with that question." };
 
       if (msg.stop_reason !== "tool_use") {
         const reply = msg.content
           .filter((b): b is Anthropic.TextBlock => b.type === "text")
           .map((b) => b.text)
           .join("");
-        return NextResponse.json({ reply: reply || "I couldn't produce an answer — try rephrasing." });
+        return { reply: reply || "I couldn't produce an answer — try rephrasing." };
       }
 
       // Execute all requested tools, return results in ONE user message
@@ -219,8 +223,30 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
       );
       convo.push({ role: "user", content: results });
     }
-    return NextResponse.json({ error: "Too many data lookups for one question — try a narrower one" }, { status: 500 });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
-  }
+    throw new Error("Too many data lookups for one question — try a narrower one");
+  };
+
+  // Heartbeat-streamed delivery (same pattern as the summary route): whitespace
+  // bytes flow immediately and every few seconds, then the JSON payload. Leading
+  // whitespace is legal JSON; the client throws on an in-body {"error": ...}.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(" "));
+      const beat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(" ")); } catch { clearInterval(beat); }
+      }, 5_000);
+      runChat()
+        .then((payload) => controller.enqueue(encoder.encode(JSON.stringify(payload))))
+        .catch((e) => controller.enqueue(encoder.encode(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }))))
+        .finally(() => { clearInterval(beat); try { controller.close(); } catch {} });
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
