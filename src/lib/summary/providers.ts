@@ -125,7 +125,9 @@ async function callGeminiJSON(prompt: string, apiKey: string, deadline = Date.no
     const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) { lastError = new Error("Empty Gemini response"); continue; }
     try {
-      return JSON.parse(text);
+      const out = JSON.parse(text);
+      out.model = GEMINI_MODELS[attempt]; // which Gemini model actually served this
+      return out;
     } catch {
       lastError = new Error("Gemini returned invalid JSON");
       continue;
@@ -224,13 +226,13 @@ const rawEffort = process.env.ANTHROPIC_SUMMARY_EFFORT || "medium";
 const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "medium") as
   "low" | "medium" | "high" | "xhigh" | "max";
 
-// Azure Static Web Apps' gateway kills API calls that run past its own timeout (~100s,
-// not configurable) and returns a plain-text "Backend call failure" body (not JSON),
-// which crashes the client's resp.json(). ANTHROPIC_SUMMARY_TIMEOUT_MS is therefore the
+// Azure Static Web Apps' gateway kills silent API requests after ~45s (measured:
+// "Backend call failure" at 45.3s) — the summary route defeats that with heartbeat
+// streaming (bytes flow while generation runs), so the constraint here is keeping the
+// user from waiting forever, not the gateway. ANTHROPIC_SUMMARY_TIMEOUT_MS is the
 // TOTAL wall-clock budget for the whole AI call — the Claude attempt AND the Gemini
 // fallback share one deadline. Claude gets the budget minus a reserve for one Gemini
-// attempt; if Claude exhausts its slice, Gemini runs in the reserve. Keep the total
-// ≤ ~80s in production; raise it only where no gateway ceiling exists (local dev).
+// attempt; if Claude exhausts its slice, Gemini runs in the reserve.
 const TOTAL_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 70_000;
 // Slice of the total held back for the Gemini fallback (one bounded attempt).
 const GEMINI_RESERVE_MS = 22_000;
@@ -336,6 +338,7 @@ export async function generateSummary(system: string, prompt: string): Promise<a
   // share it, so the total can never exceed the configured budget no matter which
   // path ends up serving the response.
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
+  const started = Date.now();
   if (anthropicKey) {
     try {
       // Claude gets the budget minus a reserve for one Gemini attempt (when a
@@ -343,6 +346,9 @@ export async function generateSummary(system: string, prompt: string): Promise<a
       const claudeBudget = Math.max(10_000, geminiKey ? TOTAL_TIMEOUT_MS - GEMINI_RESERVE_MS : TOTAL_TIMEOUT_MS);
       const data = await callClaudeJSON(system, prompt, anthropicKey, claudeBudget);
       data.provider = "Claude";
+      data.model = CLAUDE_SUMMARY_MODEL;
+      data.effort = CLAUDE_SUMMARY_EFFORT;
+      data.generationMs = Date.now() - started;
       return data;
     } catch (e) {
       if (!geminiKey) throw e;
@@ -353,6 +359,9 @@ export async function generateSummary(system: string, prompt: string): Promise<a
     // Gemini has no separate system channel in this REST shape — concatenate.
     const data = await callGeminiJSON(`${system}\n\n${prompt}`, geminiKey, deadline);
     data.provider = "Gemini";
+    // model is set inside callGeminiJSON (the attempt that served the response);
+    // generationMs includes a failed Claude attempt — it's the real request time.
+    data.generationMs = Date.now() - started;
     return data;
   }
   throw new Error("No AI provider configured");

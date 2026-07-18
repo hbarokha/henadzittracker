@@ -77,11 +77,18 @@ export async function POST(req: Request) {
   // would see actually changes (hash comparison further down, after data loads).
   // A very fresh cache (< 15 min) is served immediately without loading anything.
   const cached = force ? null : await readSummaryCache(date, bracket);
-  const serveCached = (c: CachedSummary) =>
-    NextResponse.json(Object.assign({}, c.data as object, { cached: true, cachedAt: c.generatedAt }));
+  const cachedPayload = (c: CachedSummary) =>
+    Object.assign({}, c.data as object, { cached: true, cachedAt: c.generatedAt });
   if (cached && Date.now() - new Date(cached.generatedAt).getTime() < 15 * 60 * 1000) {
-    return serveCached(cached);
+    return NextResponse.json(cachedPayload(cached));
   }
+
+  // Everything below (data load + AI generation) runs inside runSummary(), whose
+  // result is delivered over a heartbeat-streamed response — see the bottom of this
+  // handler. Azure SWA's gateway kills API requests after ~45s of silence (measured:
+  // "Backend call failure" at 45.3s), which no full generation can reliably beat; a
+  // streamed byte every few seconds keeps the connection alive for the full run.
+  const runSummary = async (): Promise<Record<string, unknown>> => {
 
   const today      = date;
   const week7Start = shiftDate(today, -6);
@@ -138,7 +145,7 @@ export async function POST(req: Request) {
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
-    return serveCached(cached);
+    return cachedPayload(cached);
   }
 
   // Previous analysis (any date/bracket) — anchors scores/bio-age and lets the model
@@ -364,36 +371,61 @@ Weight trend: ${weightChange != null
   ? `${weightChange > 0 ? "+" : ""}${weightChange} kg over 30 days (${monWeights[0]?.weightKg} kg → ${monWeights[monWeights.length - 1]?.weightKg} kg)`
   : "no weight data"}`;
 
-  try {
-    const result = await generateSummary(SUMMARY_SYSTEM_PROMPT, prompt);
+  const result = await generateSummary(SUMMARY_SYSTEM_PROMPT, prompt);
 
-    // Deterministic data-coverage info for the UI — not entrusted to the model
-    result.dataCompleteness = {
-      days:  weekSnaps.length,
-      food:  weekSnaps.filter((s) => s.food).length,
-      sleep: weekSnaps.filter((s) => s.sleep?.totalSleepSeconds).length,
-      steps: weekSnaps.filter((s) => s.daily?.steps).length,
-      hrv:   weekSnaps.filter((s) => (s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv) != null).length,
-    };
+  // Deterministic data-coverage info for the UI — not entrusted to the model
+  result.dataCompleteness = {
+    days:  weekSnaps.length,
+    food:  weekSnaps.filter((s) => s.food).length,
+    sleep: weekSnaps.filter((s) => s.sleep?.totalSleepSeconds).length,
+    steps: weekSnaps.filter((s) => s.daily?.steps).length,
+    hrv:   weekSnaps.filter((s) => (s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv) != null).length,
+  };
 
-    await writeSummaryCache(date, bracket, result, dataHash);
-    // Pointer to the most recent analysis — read back as coach memory on the next run
-    await writeJson("summary-cache/latest.json", { generatedAt: new Date().toISOString(), date, data: result });
-    // Durable bio-age series for the trend chart (upsert per date, best-effort)
-    if (result?.biologicalAge?.estimate != null) {
-      try {
-        await recordBioAge({
-          date,
-          estimate: result.biologicalAge.estimate,
-          delta: result.biologicalAge.delta ?? null,
-          confidence: result.biologicalAge.confidence ?? null,
-        });
-      } catch (e) {
-        console.warn("bio-age history write failed:", e instanceof Error ? e.message : e);
-      }
+  await writeSummaryCache(date, bracket, result, dataHash);
+  // Pointer to the most recent analysis — read back as coach memory on the next run
+  await writeJson("summary-cache/latest.json", { generatedAt: new Date().toISOString(), date, data: result });
+  // Durable bio-age series for the trend chart (upsert per date, best-effort)
+  if (result?.biologicalAge?.estimate != null) {
+    try {
+      await recordBioAge({
+        date,
+        estimate: result.biologicalAge.estimate,
+        delta: result.biologicalAge.delta ?? null,
+        confidence: result.biologicalAge.confidence ?? null,
+      });
+    } catch (e) {
+      console.warn("bio-age history write failed:", e instanceof Error ? e.message : e);
     }
-    return NextResponse.json({ ...result, cached: false });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
+  return { ...result, cached: false };
+
+  }; // end runSummary
+
+  // Heartbeat-streamed delivery: send a whitespace byte immediately and every few
+  // seconds while the generation runs, then the JSON payload. Leading whitespace is
+  // legal JSON, so the client's JSON.parse(raw) is unaffected. The status is always
+  // 200 (it's committed with the first byte) — errors travel as {"error": ...} in the
+  // body and the client throws on that field.
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(" "));
+      const beat = setInterval(() => {
+        try { controller.enqueue(encoder.encode(" ")); } catch { clearInterval(beat); }
+      }, 5_000);
+      runSummary()
+        .then((payload) => controller.enqueue(encoder.encode(JSON.stringify(payload))))
+        .catch((e) => controller.enqueue(encoder.encode(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }))))
+        .finally(() => { clearInterval(beat); try { controller.close(); } catch {} });
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      // Ask intermediaries not to buffer — each heartbeat must reach the gateway
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

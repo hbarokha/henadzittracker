@@ -64,6 +64,9 @@ interface HealthSummary {
   recommendations: Recommendation[];
   dataCompleteness?: DataCompleteness;
   provider?: string;   // "Claude" (primary) or "Gemini" (fallback) — reported by the server
+  model?: string;        // exact model that served the analysis (e.g. "claude-sonnet-5")
+  effort?: string;       // Claude thinking effort (absent on the Gemini path)
+  generationMs?: number; // wall-clock time the AI generation took server-side
   cached?: boolean;
   cachedAt?: string;
 }
@@ -444,6 +447,9 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
         throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
       }
       if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      // The route streams with status 200 committed up front — a failed generation
+      // arrives as {"error": ...} in the body rather than a non-2xx status.
+      if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
       setSummary(data as HealthSummary);
       setError(null);
     } catch (e) {
@@ -496,7 +502,13 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
               {loading
                 ? (!ready ? "Waiting for Garmin data…" : onSyncGarmin ? "Syncing Garmin then analyzing…" : "Analyzing your data…")
-                : `Powered by ${summary?.provider ?? "AI"} · all data combined`}
+                : summary
+                  ? [
+                      summary.model ?? `Powered by ${summary.provider ?? "AI"}`,
+                      summary.effort ? `${summary.effort} effort` : null,
+                      summary.generationMs != null ? `${(summary.generationMs / 1000).toFixed(1)}s` : null,
+                    ].filter(Boolean).join(" · ")
+                  : "Powered by AI · all data combined"}
             </p>
           </div>
         </div>
