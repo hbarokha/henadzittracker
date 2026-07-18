@@ -35,6 +35,14 @@ Return a JSON object with EXACTLY this structure (no markdown, no extra text):
     "summary": "<2–3 sentence narrative citing specific numbers>",
     "trends": ["<trend 1>", "<trend 2>", "<trend 3>"]
   },
+  "training": {
+    "recommendation": "train_hard|train_moderate|train_easy|active_recovery|rest",
+    "headline": "<one-sentence verdict: should the user train today or rest — direct and decisive>",
+    "analysis": "<2–4 sentences justifying the verdict from the data: training readiness score, acute:chronic load ratio, HRV vs baseline, last night's sleep, Body Battery, and recent workouts — cite the actual numbers>",
+    "loadStatus": "<one sentence on current training load: acute vs chronic load, load ratio and what it means (undertrained / productive sweet spot / ramping too fast / overreaching)>",
+    "suggestedWorkout": "<specific session for the recommendation, e.g. 'Zone 2 run 40–50 min, HR under 145' or 'full rest — light walk only'; respect the current time of day>",
+    "tomorrowOutlook": "<what tomorrow looks like given today's choice, e.g. 'if you rest today, tomorrow is primed for intervals'>"
+  },
   "supplements": {
     "stackAssessment": "<2–3 sentences evaluating the stack for this user's age, sex, weight, activity level, BMR/TDEE, VO2 max, and key metrics (HRV, sleep score, stress, resting HR). Reference at least 3 specific numbers.>",
     "adherenceInsight": "<1–2 sentences on adherence — note inconsistently taken supplements and any correlation with metric dips>",
@@ -58,6 +66,13 @@ Scoring rules:
 - supplements.interactions: evidence-based interactions AND cross-product overlaps — if the same nutrient appears in multiple products, state the cumulative daily total and whether it approaches a safety limit; empty array if none
 - recommendations: 3–6 total sorted high → low; at least one supplement recommendation if the stack has gaps or timing issues; reference WHO intensity minute targets when relevant
 - Use VO2 max, training load balance (acute/chronic ratio), and readiness score when available to assess fitness and recovery risk
+- training: this is the train-today-or-not decision the user relies on — be decisive, never hedge with "listen to your body" as the whole answer:
+  - Primary signals in priority order: training readiness score (>70 supports intensity, <40 says back off), acute:chronic load ratio (0.8–1.3 = productive sweet spot, >1.5 = injury/overtraining risk → cap intensity, <0.8 = room to push), HRV status vs 5-day avg (unbalanced/low → reduce), last night's sleep score/duration, Body Battery high + current, Garmin training status (Overreaching/Unproductive → back off; Productive/Maintaining → proceed)
+  - Weigh yesterday's and this week's workouts: a hard session (aerobic effect ≥3.5 or high training load) yesterday argues for easy/recovery today; ≥2 consecutive rest days with good recovery metrics argues for training today
+  - If key signals conflict (e.g. good readiness but poor sleep), pick the more conservative recommendation and say which signal drove it
+  - If readiness/load data is missing, decide from HRV, sleep, Body Battery, and workout history — and say the load data is missing
+  - suggestedWorkout must match the user's actual workout types from the data (don't prescribe cycling to a runner) and align with the health goal
+  - Respect CURRENT TIME: in the evening with no workout yet, judge whether a session still makes sense or whether to shift the plan to tomorrow (that becomes the tomorrowOutlook)
 - If Garmin data is missing for a period, say so and base the score on what is available
 - CONTINUITY: keep scores and the biologicalAge estimate consistent with the PREVIOUS ANALYSIS section (if present) — only move a score or the bio-age when a specific metric changed, and cite that metric as the reason
 - FOLLOW-UP: compare the previous recommendations against the current data — explicitly acknowledge progress or regression on at least one of them (in highlights, concerns, or a recommendation), e.g. "last time you were advised X — the data now shows Y"

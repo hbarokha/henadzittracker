@@ -33,6 +33,18 @@ const RESPONSE_SCHEMA = {
     }),
     week: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
     month: sectionSchema({ trends: { type: "ARRAY", items: { type: "STRING" } } }),
+    training: {
+      type: "OBJECT",
+      properties: {
+        recommendation: { type: "STRING", enum: ["train_hard", "train_moderate", "train_easy", "active_recovery", "rest"] },
+        headline: { type: "STRING" },
+        analysis: { type: "STRING" },
+        loadStatus: { type: "STRING" },
+        suggestedWorkout: { type: "STRING" },
+        tomorrowOutlook: { type: "STRING" },
+      },
+      required: ["recommendation", "headline", "analysis", "loadStatus", "suggestedWorkout", "tomorrowOutlook"],
+    },
     supplements: {
       type: "OBJECT",
       properties: {
@@ -57,7 +69,7 @@ const RESPONSE_SCHEMA = {
       },
     },
   },
-  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
+  required: ["biologicalAge", "today", "week", "month", "training", "supplements", "recommendations"],
 };
 
 // Primary model, one retry on transient errors, then a lighter fallback model
@@ -148,6 +160,19 @@ const CLAUDE_SCHEMA = {
     today: claudeSection({ highlights: strArray, concerns: strArray }),
     week: claudeSection({ trends: strArray }),
     month: claudeSection({ trends: strArray }),
+    training: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        recommendation: { type: "string", enum: ["train_hard", "train_moderate", "train_easy", "active_recovery", "rest"] },
+        headline: { type: "string" },
+        analysis: { type: "string" },
+        loadStatus: { type: "string" },
+        suggestedWorkout: { type: "string" },
+        tomorrowOutlook: { type: "string" },
+      },
+      required: ["recommendation", "headline", "analysis", "loadStatus", "suggestedWorkout", "tomorrowOutlook"],
+    },
     supplements: {
       type: "object",
       additionalProperties: false,
@@ -174,7 +199,7 @@ const CLAUDE_SCHEMA = {
       },
     },
   },
-  required: ["biologicalAge", "today", "week", "month", "supplements", "recommendations"],
+  required: ["biologicalAge", "today", "week", "month", "training", "supplements", "recommendations"],
 };
 
 // Opus-tier reasoning is the point of using Claude here; override via env if desired.

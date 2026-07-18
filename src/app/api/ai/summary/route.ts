@@ -132,8 +132,9 @@ export async function POST(req: Request) {
   // Regenerate only when the data the model would see has actually changed since the
   // cached summary was generated (syncedAt timestamps excluded — they change on
   // every sync even when the values don't)
+  // promptVersion invalidates caches when the output structure changes (v2: training section)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
+    { promptVersion: 2, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
