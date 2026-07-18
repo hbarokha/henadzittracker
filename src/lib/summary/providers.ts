@@ -78,10 +78,18 @@ const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
+async function callGeminiJSON(prompt: string, apiKey: string, deadline = Date.now() + 60_000): Promise<any> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt < GEMINI_MODELS.length; attempt++) {
     if (attempt > 0) await wait(1500 * attempt);
+    // Respect the shared wall-clock deadline: never start an attempt there's no
+    // time left to finish — better to fail fast with a JSON error the client can
+    // render than to let the platform gateway kill the whole request.
+    const remaining = deadline - Date.now();
+    if (remaining < 5_000) {
+      lastError = lastError ?? new Error("Gemini fallback skipped — request time budget exhausted");
+      break;
+    }
     let resp: Response;
     try {
       resp = await fetch(
@@ -89,9 +97,9 @@ async function callGeminiJSON(prompt: string, apiKey: string): Promise<any> {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // A hung connection must not eat the whole platform gateway budget —
+          // A hung connection must not eat the remaining gateway budget —
           // abort and move to the next attempt instead.
-          signal: AbortSignal.timeout(25_000),
+          signal: AbortSignal.timeout(Math.min(20_000, remaining)),
           body: JSON.stringify({
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: {
@@ -218,15 +226,14 @@ const CLAUDE_SUMMARY_EFFORT = (EFFORT_LEVELS.has(rawEffort) ? rawEffort : "mediu
 
 // Azure Static Web Apps' gateway kills API calls that run past its own timeout (~100s,
 // not configurable) and returns a plain-text "Backend call failure" body (not JSON),
-// which crashes the client's resp.json(). Opus with adaptive thinking can occasionally
-// run long, so by default we abort the Claude call ourselves well before that gateway
-// limit and fall back to the much faster Gemini path instead of letting the platform
-// kill the whole request. The default MUST leave the Gemini fallback (~15-25s) enough
-// room to finish inside the gateway window, or a slow Claude call fails the entire
-// request and the cache is never written — 70s + fallback ≈ 95s total. Override via env
-// only when running somewhere without that ceiling (e.g. local dev) so slower/larger
-// analyses get to finish instead of always falling back.
-const CLAUDE_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 70_000;
+// which crashes the client's resp.json(). ANTHROPIC_SUMMARY_TIMEOUT_MS is therefore the
+// TOTAL wall-clock budget for the whole AI call — the Claude attempt AND the Gemini
+// fallback share one deadline. Claude gets the budget minus a reserve for one Gemini
+// attempt; if Claude exhausts its slice, Gemini runs in the reserve. Keep the total
+// ≤ ~80s in production; raise it only where no gateway ceiling exists (local dev).
+const TOTAL_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 70_000;
+// Slice of the total held back for the Gemini fallback (one bounded attempt).
+const GEMINI_RESERVE_MS = 22_000;
 
 // Fast mode (research preview): same Opus model at up to 2.5× output tokens/sec, at
 // premium pricing. Only Opus 4.7/4.8 support it — if the model is overridden to
@@ -237,11 +244,11 @@ const CLAUDE_FAST_MODE =
   process.env.ANTHROPIC_SUMMARY_FAST !== "0" && FAST_MODE_MODELS.test(CLAUDE_SUMMARY_MODEL);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callClaudeJSON(system: string, prompt: string, apiKey: string): Promise<any> {
+async function callClaudeJSON(system: string, prompt: string, apiKey: string, budgetMs: number): Promise<any> {
   const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
   // One wall-clock deadline shared across attempts so a fast→standard retry can't
   // blow past the platform gateway timeout.
-  const deadline = Date.now() + CLAUDE_TIMEOUT_MS;
+  const deadline = Date.now() + budgetMs;
 
   const run = async (fast: boolean) => {
     const params = {
@@ -277,7 +284,7 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string): P
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
         stream.abort();
-        reject(new Error(`Claude summary timed out after ${CLAUDE_TIMEOUT_MS / 1000}s`));
+        reject(new Error(`Claude summary timed out after ${Math.round(budgetMs / 1000)}s`));
       }, Math.max(1_000, deadline - Date.now()));
     });
     try {
@@ -325,9 +332,16 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string): P
 export async function generateSummary(system: string, prompt: string): Promise<any> {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY;
+  // One deadline for the WHOLE call — the Claude attempt and the Gemini fallback
+  // share it, so the total can never exceed the configured budget no matter which
+  // path ends up serving the response.
+  const deadline = Date.now() + TOTAL_TIMEOUT_MS;
   if (anthropicKey) {
     try {
-      const data = await callClaudeJSON(system, prompt, anthropicKey);
+      // Claude gets the budget minus a reserve for one Gemini attempt (when a
+      // fallback exists); with no Gemini key it can use the entire budget.
+      const claudeBudget = Math.max(10_000, geminiKey ? TOTAL_TIMEOUT_MS - GEMINI_RESERVE_MS : TOTAL_TIMEOUT_MS);
+      const data = await callClaudeJSON(system, prompt, anthropicKey, claudeBudget);
       data.provider = "Claude";
       return data;
     } catch (e) {
@@ -337,7 +351,7 @@ export async function generateSummary(system: string, prompt: string): Promise<a
   }
   if (geminiKey) {
     // Gemini has no separate system channel in this REST shape — concatenate.
-    const data = await callGeminiJSON(`${system}\n\n${prompt}`, geminiKey);
+    const data = await callGeminiJSON(`${system}\n\n${prompt}`, geminiKey, deadline);
     data.provider = "Gemini";
     return data;
   }
