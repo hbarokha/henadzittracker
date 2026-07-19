@@ -12,46 +12,68 @@ export default function JournalCard({ date }: { date: string }) {
   const [catalog, setCatalog] = useState<JournalTag[]>([]);
   const [tags, setTags] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(false);
   // Latest selection, so rapid taps collapse into one save of the final state
   const pendingRef = useRef<string[] | null>(null);
+  // Ref (not state) so same-tick taps can't sneak past a stale `saving` closure
+  const savingRef = useRef(false);
+  // True once the user has toggled anything for the current date — a fetch response
+  // arriving after that must NOT overwrite the user's selection (that race silently
+  // wiped tags toggled right after navigating to another day)
+  const dirtyRef = useRef(false);
+  // Mirror of `tags` so rapid same-tick taps never work from a stale closure
+  const tagsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setLoaded(false);
+    setSaveError(false);
+    dirtyRef.current = false;
+    let cancelled = false;
     fetch(`/api/journal?date=${date}`)
       .then((r) => r.json())
       .then((d) => {
+        if (cancelled) return;
         if (Array.isArray(d.catalog)) setCatalog(d.catalog);
-        setTags(new Set(Array.isArray(d.tags) ? d.tags : []));
+        if (!dirtyRef.current) {
+          tagsRef.current = new Set(Array.isArray(d.tags) ? d.tags : []);
+          setTags(tagsRef.current);
+        }
       })
       .catch(() => {})
-      .finally(() => setLoaded(true));
+      .finally(() => { if (!cancelled) setLoaded(true); });
+    return () => { cancelled = true; };
   }, [date]);
 
-  async function persist(next: string[]) {
+  async function persist(saveDate: string, next: string[]) {
     pendingRef.current = next;
-    if (saving) return; // an in-flight save will pick up the latest state after it lands
-    setSaving(true);
+    if (savingRef.current) return; // the in-flight loop picks up the latest state
+    savingRef.current = true;
     try {
       while (pendingRef.current) {
         const toSave = pendingRef.current;
         pendingRef.current = null;
-        await fetch("/api/journal", {
+        const resp = await fetch("/api/journal", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ date, tags: toSave }),
+          body: JSON.stringify({ date: saveDate, tags: toSave }),
         });
+        if (!resp.ok) throw new Error("save failed");
+        setSaveError(false);
       }
-    } catch { /* optimistic UI keeps the local state; next toggle retries */ }
-    setSaving(false);
+    } catch {
+      setSaveError(true); // optimistic UI keeps the local state; next toggle retries
+    }
+    savingRef.current = false;
   }
 
   function toggle(id: string) {
-    const next = new Set(tags);
+    dirtyRef.current = true;
+    const next = new Set(tagsRef.current);
     if (next.has(id)) next.delete(id);
     else next.add(id);
+    tagsRef.current = next;
     setTags(next);
-    persist([...next]);
+    persist(date, [...next]);
   }
 
   return (
@@ -77,6 +99,12 @@ export default function JournalCard({ date }: { date: string }) {
       </div>
 
       <div className="px-5 py-4">
+        {saveError && (
+          <p className="text-xs mb-3 px-3 py-2 rounded-lg"
+            style={{ color: "#f87171", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
+            Couldn&apos;t save — check your connection, then tap any chip to retry.
+          </p>
+        )}
         {!loaded ? (
           <div className="loading-bar-track"><div className="loading-bar-fill" style={{ background: "var(--amber)" }} /></div>
         ) : (

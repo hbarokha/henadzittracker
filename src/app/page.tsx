@@ -122,6 +122,45 @@ function SectionHead({ label, children }: { label: string; children?: React.Reac
   );
 }
 
+// Collapsible section with remembered state — progressive disclosure for the
+// Overview tab. Collapsed sections don't render (or fetch) their content at all,
+// so heavy chart grids stay dormant until opened.
+function CollapsibleSection({ id, label, defaultOpen = true, children }: {
+  id: string; label: string; defaultOpen?: boolean; children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`section-open:${id}`);
+      if (saved != null) setOpen(saved === "1");
+    } catch { /* private mode etc. — fall back to default */ }
+  }, [id]);
+  const toggle = () => setOpen((v) => {
+    const next = !v;
+    try { localStorage.setItem(`section-open:${id}`, next ? "1" : "0"); } catch {}
+    return next;
+  });
+  return (
+    <section>
+      <button onClick={toggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 mb-4 min-h-[36px] text-left cursor-pointer group">
+        <div className="w-0.5 h-3 rounded-full shrink-0" style={{ background: "var(--amber)" }} />
+        <span className="text-[10px] tracking-[0.18em] uppercase shrink-0"
+          style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+          {label}
+        </span>
+        <div className="flex-1 h-px" style={{ background: "var(--border)" }} />
+        <svg className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+          style={{ color: "var(--text-dim)" }}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && children}
+    </section>
+  );
+}
+
 // ── Icon Button ───────────────────────────────────────────────────────────────
 function IconBtn({
   onClick, title, active, children
@@ -521,17 +560,15 @@ export default function Home() {
             </section>
 
             {/* Daily behavior journal — feeds the correlation engine */}
-            <section>
-              <SectionHead label="Journal" />
+            <CollapsibleSection id="journal" label="Journal">
               <JournalCard date={selectedDate} />
-            </section>
+            </CollapsibleSection>
 
-            {/* Weekly chart */}
+            {/* Weekly chart — collapsed by default; the glance card already covers today */}
             {stats && stats.week.some((d) => d.calories > 0) && (
-              <section>
-                <SectionHead label="7-Day Calorie History" />
+              <CollapsibleSection id="weekly-calories" label="7-Day Calorie History" defaultOpen={false}>
                 <WeeklyChart week={stats.week} goal={goals.calories} today={todayIso} />
-              </section>
+              </CollapsibleSection>
             )}
 
             {/* Garmin */}
@@ -582,9 +619,9 @@ export default function Home() {
               </section>
             )}
 
-            {/* Trends — paired into two columns on desktop to keep the page scannable */}
-            <section>
-              <SectionHead label="Trends" />
+            {/* Trends — collapsed by default so the Overview stays scannable; the whole
+                grid (and its fetches) stays dormant until opened */}
+            <CollapsibleSection id="trends" label="Trends" defaultOpen={false}>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
                 {garminStatus?.connected && <ResilienceCard date={selectedDate} refreshKey={garminRefreshKey} />}
                 {garminStatus?.connected && <MetricCompareChart date={selectedDate} refreshKey={garminRefreshKey} />}
@@ -595,7 +632,7 @@ export default function Home() {
                 <BioAgeChart />
                 <WeightChart todayIso={todayIso} />
               </div>
-            </section>
+            </CollapsibleSection>
           </div>
         )}
 
