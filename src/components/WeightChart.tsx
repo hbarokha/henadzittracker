@@ -259,7 +259,13 @@ export default function WeightChart({ todayIso }: Props) {
               <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="var(--sage)" />
             ))}
             <ExtremeLabels pts={vals.map((v, i) => ({ i, v }))} toX={toX} toY={toY}
-              width={W} yMax={H - 2} format={(v) => v.toFixed(1)} />
+              width={W} yMax={H - 2} format={(v) => v.toFixed(1)} skip={[vals.length - 1]} />
+            {vals.length > 0 && (
+              <text x={toX(vals.length - 1)} y={Math.max(8, toY(vals[vals.length - 1]) - 6)} textAnchor="end"
+                fontSize="9" fill="var(--sage)" fontFamily="var(--font-mono)">
+                now {vals[vals.length - 1].toFixed(1)}
+              </text>
+            )}
           </svg>
           <div
             className="flex justify-between pb-2 pl-6"

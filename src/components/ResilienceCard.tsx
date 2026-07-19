@@ -101,6 +101,11 @@ export default function ResilienceCard({ date, refreshKey }: { date: string; ref
               ))}
               <ExtremeLabels pts={series.map((p, i) => ({ i, v: p.score }))} toX={toX} toY={toY}
                 width={W} skip={[n - 1]} yMax={H - 2} />
+              {/* latest score value */}
+              <text x={toX(n - 1)} y={Math.max(8, toY(series[n - 1].score) - 7)} textAnchor="end"
+                fontSize="9" fill={color} fontFamily="var(--font-mono)">
+                now {series[n - 1].score}
+              </text>
             </svg>
           )}
 

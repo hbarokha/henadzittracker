@@ -118,6 +118,13 @@ export default function BodyBatteryChart({ date, refreshKey }: { date: string; r
                   stroke={isLast ? "var(--bg-surface)" : "none"} strokeWidth={isLast ? 1.5 : 0} />
               );
             })}
+            {/* Past dates have no live "current" — label the last daily high instead */}
+            {latest?.current == null && latest?.highest != null && (
+              <text x={toX(n - 1)} y={Math.max(8, toY(latest.highest) - 7)} textAnchor="end"
+                fontSize="9" fill="#38bdf8" fontFamily="var(--font-mono)">
+                {latest.highest}
+              </text>
+            )}
             {/* Today's current level — amber marker + label so "today" is unmistakable */}
             {latest?.current != null && (
               <>

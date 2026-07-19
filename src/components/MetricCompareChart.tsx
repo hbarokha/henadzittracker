@@ -130,7 +130,14 @@ export default function MetricCompareChart({ date, refreshKey }: { date: string;
                 <title>{rows[x.i].date} — {defA.label} {fmtA(x.v)}{defA.unit}</title>
               </circle>
             ))}
-            <ExtremeLabels pts={A.p} toX={toX} toY={A.toY} width={W} format={fmtA} yMin={7} yMax={PANEL_H - 1} />
+            <ExtremeLabels pts={A.p} toX={toX} toY={A.toY} width={W} format={fmtA} yMin={7} yMax={PANEL_H - 1}
+              skip={A.p.length ? [A.p[A.p.length - 1].i] : []} />
+            {A.p.length > 0 && (
+              <text x={toX(A.p[A.p.length - 1].i)} y={Math.max(7, A.toY(A.p[A.p.length - 1].v) - 5)} textAnchor="end"
+                fontSize="9" fill={A_COLOR} fontFamily="var(--font-mono)">
+                {fmtA(A.p[A.p.length - 1].v)}{defA.unit}
+              </text>
+            )}
 
             {/* divider */}
             <line x1={PADL} x2={W - PADR} y1={PANEL_H + GAP / 2} y2={PANEL_H + GAP / 2} stroke="var(--border)" strokeWidth="0.5" />
@@ -145,7 +152,14 @@ export default function MetricCompareChart({ date, refreshKey }: { date: string;
               </circle>
             ))}
             <ExtremeLabels pts={B.p} toX={toX} toY={B.toY} width={W} format={fmtB}
-              yMin={PANEL_H + GAP + 7} yMax={H - 1} />
+              yMin={PANEL_H + GAP + 7} yMax={H - 1}
+              skip={B.p.length ? [B.p[B.p.length - 1].i] : []} />
+            {B.p.length > 0 && (
+              <text x={toX(B.p[B.p.length - 1].i)} y={Math.max(PANEL_H + GAP + 7, B.toY(B.p[B.p.length - 1].v) - 5)} textAnchor="end"
+                fontSize="9" fill={B_COLOR} fontFamily="var(--font-mono)">
+                {fmtB(B.p[B.p.length - 1].v)}{defB.unit}
+              </text>
+            )}
           </svg>
           <div className="flex justify-between items-center pb-2">
             <span style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{rows[0]?.date.slice(5)}</span>

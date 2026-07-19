@@ -109,10 +109,19 @@ export default function BloodPressureChart({ date, refreshKey }: { date: string;
               </g>
             ))}
             {/* window extremes: highest systolic (▲) and lowest diastolic (▼) */}
-            <ExtremeLabels width={W} toX={toX} toY={toY} show="max"
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="max" skip={[n - 1]}
               pts={rows.map((r, i) => ({ i, v: r.systolic }))} />
-            <ExtremeLabels width={W} toX={toX} toY={toY} show="min" yMax={H - 2}
+            <ExtremeLabels width={W} toX={toX} toY={toY} show="min" yMax={H - 2} skip={[n - 1]}
               pts={rows.map((r, i) => ({ i, v: r.diastolic }))} />
+            {/* latest reading values */}
+            {latest && (
+              <>
+                <text x={toX(n - 1)} y={Math.max(8, toY(latest.systolic) - 6)} textAnchor="end"
+                  fontSize="9" fill="var(--coral)" fontFamily="var(--font-mono)">{latest.systolic}</text>
+                <text x={toX(n - 1)} y={Math.min(H - 2, toY(latest.diastolic) + 13)} textAnchor="end"
+                  fontSize="9" fill="var(--sky)" fontFamily="var(--font-mono)">{latest.diastolic}</text>
+              </>
+            )}
           </svg>
           <div className="flex justify-between items-center pb-2">
             <span style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{rows[0]?.date.slice(5)}</span>

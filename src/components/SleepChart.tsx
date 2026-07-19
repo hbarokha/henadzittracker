@@ -153,6 +153,13 @@ export default function SleepChart({ date, refreshKey }: { date: string; refresh
                 </rect>
               );
             })}
+            {/* latest duration value on the last bar */}
+            {latest?.hours != null && (
+              <text x={toX(n - 1)} y={BAR_TOP + BAR_H - barH(latest.hours) - 3} textAnchor="end"
+                fontSize="9" fill="#38bdf8" fontFamily="var(--font-mono)">
+                {latest.hours}h
+              </text>
+            )}
           </svg>
           <div className="flex justify-between items-center pb-2">
             <span style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>{rows[0]?.date.slice(5)}</span>

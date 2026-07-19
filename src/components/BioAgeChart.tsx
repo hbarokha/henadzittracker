@@ -116,7 +116,13 @@ export default function BioAgeChart() {
                   <circle key={i} cx={toX(i)} cy={toY(v)} r="3" fill="#a78bfa" />
                 ))}
                 <ExtremeLabels pts={vals.map((v, i) => ({ i, v }))} toX={toX} toY={toY}
-                  width={W} yMax={H - 2} />
+                  width={W} yMax={H - 2} skip={[vals.length - 1]} />
+                {vals.length > 0 && (
+                  <text x={toX(vals.length - 1)} y={Math.max(8, toY(vals[vals.length - 1]) - 6)} textAnchor="end"
+                    fontSize="9" fill="#a78bfa" fontFamily="var(--font-mono)">
+                    now {vals[vals.length - 1]}
+                  </text>
+                )}
               </svg>
               <div className="flex justify-between pb-2 pl-5"
                 style={{ fontSize: "10px", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
