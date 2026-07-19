@@ -7,6 +7,11 @@ export interface CustomFood {
   protein: number;
   carbs: number;
   fat: number;
+  /** Base amount/unit for gram-ml rescaling (AI/barcode foods) */
+  amount?: number;
+  unit?: "g" | "ml";
+  /** Estimated micronutrients for the serving (keys per lib/micros.ts) */
+  micros?: Record<string, number>;
 }
 
 export type MealCategory = "breakfast" | "lunch" | "dinner" | "snack";

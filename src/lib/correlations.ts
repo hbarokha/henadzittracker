@@ -1,17 +1,28 @@
 import type { DaySnapshot } from "@/lib/summary/snapshots";
-import type { Supplement } from "@/lib/supplements";
 
-// ── Deterministic supplement ↔ recovery correlations ─────────────────────────
+// ── Deterministic factor ↔ recovery correlations ─────────────────────────────
 //
-// For each supplement, days in the window are split into "dose days" and
-// "non-dose days", and each recovery metric is compared between the two groups.
-// A dose taken on day D is matched against the FOLLOWING day's snapshot (D+1):
+// A "factor" is anything that either happened on a day or didn't: a supplement
+// dose, or a journaled behavior (alcohol, sauna, late caffeine, …). For each
+// factor, days in the window are split into "factor days" and "non-factor days",
+// and each recovery metric is compared between the two groups.
+// A factor on day D is matched against the FOLLOWING day's snapshot (D+1):
 // sleep/HRV caches for a date describe the night that ended that morning, so the
-// night affected by day-D's dose is recorded under D+1. Stress, resting HR and
-// Body Battery recharge on D+1 likewise reflect the night after the dose.
+// night affected by day-D's dose/behavior is recorded under D+1. Stress, resting
+// HR and Body Battery recharge on D+1 likewise reflect the night after.
 //
 // This is a correlation, not causation — the numbers are computed exactly and
 // the AI narration is only allowed to comment on them, never invent its own.
+
+export interface CorrelationFactor {
+  id: string;
+  name: string;
+  kind: "supplement" | "behavior";
+  /** ISO date before which the factor didn't exist (supplement createdAt) — those days are excluded */
+  since?: string;
+  /** dates (within the window) the factor applied */
+  dates: string[];
+}
 
 const MIN_GROUP_DAYS = 4; // fewer than this in either group → too noisy to report
 
@@ -53,10 +64,11 @@ export interface MetricCorrelation {
   notTakenDays: number;
 }
 
-export interface SupplementCorrelation {
-  supplementId: string;
+export interface FactorCorrelation {
+  factorId: string;
   name: string;
-  doseDays: number;       // dose days in the window (before metric validity filtering)
+  kind: "supplement" | "behavior";
+  doseDays: number;       // factor days in the window (before metric validity filtering)
   nonDoseDays: number;
   metrics: MetricCorrelation[];
 }
@@ -67,22 +79,21 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 export function computeCorrelations(
   dates: string[],               // window, oldest → newest; snaps[i] corresponds to dates[i]
   snaps: DaySnapshot[],
-  supplements: Supplement[],
-  takenMap: Record<string, string[]>, // supplementId → dates taken (within window)
-): SupplementCorrelation[] {
-  const results: SupplementCorrelation[] = [];
+  factors: CorrelationFactor[],
+): FactorCorrelation[] {
+  const results: FactorCorrelation[] = [];
 
-  for (const s of supplements) {
-    const taken = new Set(takenMap[s.id] ?? []);
-    const created = (s.createdAt ?? "").slice(0, 10);
+  for (const s of factors) {
+    const applied = new Set(s.dates);
+    const since = (s.since ?? "").slice(0, 10);
 
-    // Dose day D is scored against day D+1's snapshot — the last date has no "next
+    // Factor day D is scored against day D+1's snapshot — the last date has no "next
     // day" in the window, so it can't participate.
     const doseIdx: number[] = [];
     const nonDoseIdx: number[] = [];
     for (let i = 0; i < dates.length - 1; i++) {
-      if (created && dates[i] < created) continue; // supplement didn't exist yet
-      (taken.has(dates[i]) ? doseIdx : nonDoseIdx).push(i);
+      if (since && dates[i] < since) continue; // factor didn't exist yet
+      (applied.has(dates[i]) ? doseIdx : nonDoseIdx).push(i);
     }
     if (doseIdx.length < MIN_GROUP_DAYS || nonDoseIdx.length < MIN_GROUP_DAYS) continue;
 
@@ -108,8 +119,9 @@ export function computeCorrelations(
     if (!metrics.length) continue;
 
     results.push({
-      supplementId: s.id,
-      name: [s.brand, s.name].filter(Boolean).join(" "),
+      factorId: s.id,
+      name: s.name,
+      kind: s.kind,
       doseDays: doseIdx.length,
       nonDoseDays: nonDoseIdx.length,
       metrics,

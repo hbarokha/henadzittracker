@@ -15,16 +15,17 @@ interface MetricCorrelation {
   notTakenDays: number;
 }
 
-interface SupplementCorrelation {
-  supplementId: string;
+interface FactorCorrelation {
+  factorId: string;
   name: string;
+  kind?: "supplement" | "behavior";
   doseDays: number;
   nonDoseDays: number;
   metrics: MetricCorrelation[];
 }
 
 interface InsightsData {
-  correlations: SupplementCorrelation[];
+  correlations: FactorCorrelation[];
   narrative: string | null;
   suggestions: string[];
   generatedAt: string;
@@ -65,10 +66,10 @@ export default function CorrelationInsights({ date }: { date: string }) {
           <IconBeaker style={{ color: "var(--mint)" }} />
           <div>
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
-              Supplement Correlations
+              Correlations
             </h3>
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              dose day vs next-day recovery · last 30 days
+              supplements &amp; behaviors vs next-day recovery · last 30 days
             </p>
           </div>
         </div>
@@ -105,8 +106,9 @@ export default function CorrelationInsights({ date }: { date: string }) {
       <div className="px-5 py-4 space-y-4" style={{ opacity: loading && data ? 0.45 : 1 }}>
         {data && !data.correlations.length && !loading && (
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Not enough data yet — correlations need at least 4 dose days and 4 non-dose days
-            per supplement in the last 30 days. Keep checking off your supplements.
+            Not enough data yet — correlations need at least 4 on-days and 4 off-days per
+            supplement or journal tag in the last 30 days. Keep checking off supplements
+            and logging daily behaviors in the journal.
           </p>
         )}
 
@@ -134,9 +136,17 @@ export default function CorrelationInsights({ date }: { date: string }) {
 
         {/* Deterministic table */}
         {data?.correlations.map((c) => (
-          <div key={c.supplementId} className="space-y-1.5">
+          <div key={c.factorId} className="space-y-1.5">
             <div className="flex items-baseline justify-between">
-              <p className="text-xs font-semibold" style={{ color: "var(--text)" }}>{c.name}</p>
+              <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--text)" }}>
+                {c.name}
+                {c.kind === "behavior" && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide"
+                    style={{ color: "var(--sky)", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", fontFamily: "var(--font-mono)" }}>
+                    behavior
+                  </span>
+                )}
+              </p>
               <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
                 {c.doseDays} on · {c.nonDoseDays} off
               </p>

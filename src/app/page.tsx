@@ -21,6 +21,10 @@ import StressChart     from "@/components/StressChart";
 import BloodPressureChart from "@/components/BloodPressureChart";
 import CorrelationInsights from "@/components/CorrelationInsights";
 import HealthChat      from "@/components/HealthChat";
+import JournalCard     from "@/components/JournalCard";
+import MicrosPanel     from "@/components/MicrosPanel";
+import ResilienceCard  from "@/components/ResilienceCard";
+import MetricCompareChart from "@/components/MetricCompareChart";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
@@ -516,6 +520,12 @@ export default function Home() {
               <DailySummary totals={totals} goals={goals} compact />
             </section>
 
+            {/* Daily behavior journal — feeds the correlation engine */}
+            <section>
+              <SectionHead label="Journal" />
+              <JournalCard date={selectedDate} />
+            </section>
+
             {/* Weekly chart */}
             {stats && stats.week.some((d) => d.calories > 0) && (
               <section>
@@ -576,6 +586,8 @@ export default function Home() {
             <section>
               <SectionHead label="Trends" />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                {garminStatus?.connected && <ResilienceCard date={selectedDate} refreshKey={garminRefreshKey} />}
+                {garminStatus?.connected && <MetricCompareChart date={selectedDate} refreshKey={garminRefreshKey} />}
                 {garminStatus?.connected && <SleepChart date={selectedDate} refreshKey={garminRefreshKey} />}
                 {garminStatus?.connected && <BodyBatteryChart date={selectedDate} refreshKey={garminRefreshKey} />}
                 {garminStatus?.connected && <StressChart date={selectedDate} refreshKey={garminRefreshKey} />}
@@ -629,6 +641,12 @@ export default function Home() {
                   <AddFoodPanel onAIAdd={addCustomFood} />
                 </div>
               </div>
+            </section>
+
+            {/* Micronutrients — food estimates + supplement doses vs daily targets */}
+            <section>
+              <SectionHead label="Micronutrients" />
+              <MicrosPanel date={selectedDate} refreshKey={entries.length} />
             </section>
           </div>
         )}

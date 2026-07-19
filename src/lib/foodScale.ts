@@ -15,6 +15,13 @@ export function scaleFoodAmount(food: NutritionFood, amount: number): NutritionF
   if (!isWeighable(food)) return food;
   const base = food.amount as number;
   const factor = amount / base;
+  const micros = food.micros
+    ? Object.fromEntries(
+        Object.entries(food.micros)
+          .filter(([, v]) => typeof v === "number")
+          .map(([k, v]) => [k, r1((v as number) * factor)])
+      )
+    : undefined;
   return {
     ...food,
     amount,
@@ -23,5 +30,6 @@ export function scaleFoodAmount(food: NutritionFood, amount: number): NutritionF
     protein: r1(food.protein * factor),
     carbs: r1(food.carbs * factor),
     fat: r1(food.fat * factor),
+    ...(micros ? { micros } : {}),
   };
 }

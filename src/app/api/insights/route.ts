@@ -3,23 +3,25 @@ import { createHash } from "crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { loadProfile } from "@/lib/profile";
 import { getAllSupplements, getTakenDatesBySupplement } from "@/lib/supplements";
+import { getTagDatesInRange, JOURNAL_TAGS } from "@/lib/journal";
 import { buildSnapshots, shiftDate, dateRange } from "@/lib/summary/snapshots";
-import { computeCorrelations, type SupplementCorrelation } from "@/lib/correlations";
+import { computeCorrelations, type CorrelationFactor, type FactorCorrelation } from "@/lib/correlations";
 import { readJson, writeJson } from "@/lib/storage";
 
 // ── Correlation insights ──────────────────────────────────────────────────────
 // GET /api/insights?date=YYYY-MM-DD[&force=1]
 //
-// Deterministic dose-day vs non-dose-day comparisons (lib/correlations.ts) over the
-// last 30 days, narrated by Claude (Gemini fallback). The numbers are computed in
-// code; the model only comments on them. Cached per date, invalidated by data hash.
+// Deterministic factor-day vs non-factor-day comparisons (lib/correlations.ts) over
+// the last 30 days — supplements AND journaled behaviors — narrated by Claude
+// (Gemini fallback). The numbers are computed in code; the model only comments on
+// them. Cached per date, invalidated by data hash.
 
 const WINDOW_DAYS = 30;
 
 interface CachedInsights {
   generatedAt: string;
   dataHash: string;
-  correlations: SupplementCorrelation[];
+  correlations: FactorCorrelation[];
   narrative: string | null;
   suggestions: string[];
 }
@@ -35,26 +37,30 @@ const NARRATION_SCHEMA = {
 };
 
 const NARRATION_SYSTEM = `You are a data-grounded health coach. You are given a table of
-deterministic correlations between a user's supplement intake and next-day recovery metrics
-(each dose day is compared against the FOLLOWING day's sleep/HRV/stress/resting-HR/Body-Battery).
+deterministic correlations between a user's daily factors — supplement intake AND journaled
+behaviors (alcohol, sauna, late caffeine, …) — and next-day recovery metrics (each factor day
+is compared against the FOLLOWING day's sleep/HRV/stress/resting-HR/Body-Battery).
 
 Rules:
 - Comment ONLY on the numbers given. Never invent values or mention metrics not in the table.
 - Highlight the 2-4 most meaningful associations (large deltas in the beneficial or harmful
   direction, reasonable sample sizes). Small deltas or tiny samples → say the data is inconclusive.
+- Behaviors marked [behavior] are lifestyle choices, not supplements — phrase advice accordingly
+  (e.g. "alcohol nights cost you X sleep-score points on average").
 - Always note that these are correlations, not proof of causation.
 - "suggestions": 1-3 concrete self-experiments, e.g. "2 weeks on / 2 weeks off Glycine, then
-  compare average sleep score". Only suggest experiments grounded in the table.
+  compare average sleep score" or "skip late caffeine for 2 weeks and compare deep sleep".
+  Only suggest experiments grounded in the table.
 - Keep the narrative to 3-5 sentences, plain language, no markdown headers.`;
 
-function correlationTable(correlations: SupplementCorrelation[], goal: string | undefined): string {
+function correlationTable(correlations: FactorCorrelation[], goal: string | undefined): string {
   const lines = correlations.map((c) => {
     const rows = c.metrics.map((m) =>
       `    ${m.label}: taken ${m.takenAvg}${m.unit} vs not-taken ${m.notTakenAvg}${m.unit} → delta ${m.delta > 0 ? "+" : ""}${m.delta}${m.unit} (${m.takenDays}/${m.notTakenDays} days, ${m.higherIsBetter ? "higher" : "lower"} is better)`
     ).join("\n");
-    return `- ${c.name} (${c.doseDays} dose days, ${c.nonDoseDays} non-dose days):\n${rows}`;
+    return `- ${c.name}${c.kind === "behavior" ? " [behavior]" : ""} (${c.doseDays} factor days, ${c.nonDoseDays} non-factor days):\n${rows}`;
   });
-  return `${goal ? `User health goal: ${goal}\n\n` : ""}Correlations over the last ${WINDOW_DAYS} days (dose day vs next-day metric):\n${lines.join("\n")}`;
+  return `${goal ? `User health goal: ${goal}\n\n` : ""}Correlations over the last ${WINDOW_DAYS} days (factor day vs next-day metric):\n${lines.join("\n")}`;
 }
 
 const CLAUDE_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-opus-4-8";
@@ -132,15 +138,35 @@ export async function GET(req: Request) {
 
   const dates = dateRange(shiftDate(date, -(WINDOW_DAYS - 1)), date);
 
-  const [supplements, takenMap, profile] = await Promise.all([
+  const [supplements, takenMap, tagDates, profile] = await Promise.all([
     getAllSupplements(),
     getTakenDatesBySupplement(dates),
+    getTagDatesInRange(dates),
     loadProfile(),
   ]);
 
+  // Factors = supplements (dose days) + journaled behaviors (tag days)
+  const factors: CorrelationFactor[] = [
+    ...supplements.map((s) => ({
+      id: s.id,
+      name: [s.brand, s.name].filter(Boolean).join(" "),
+      kind: "supplement" as const,
+      since: s.createdAt,
+      dates: takenMap[s.id] ?? [],
+    })),
+    ...JOURNAL_TAGS
+      .filter((t) => (tagDates[t.id] ?? []).length > 0)
+      .map((t) => ({
+        id: `tag:${t.id}`,
+        name: t.label,
+        kind: "behavior" as const,
+        dates: tagDates[t.id],
+      })),
+  ];
+
   // Food data isn't part of the correlation set — pass no entries to skip that read
   const snaps = await buildSnapshots(dates, []);
-  const correlations = computeCorrelations(dates, snaps, supplements, takenMap);
+  const correlations = computeCorrelations(dates, snaps, factors);
 
   const dataHash = createHash("sha256").update(JSON.stringify(correlations)).digest("hex");
   const cacheKey = `insights-cache/${date}.json`;

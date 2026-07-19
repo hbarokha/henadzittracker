@@ -536,6 +536,13 @@ Activity multipliers:
 
 ## Next steps
 
+- [ ] **Adaptive TDEE (MacroFactor-style)** — deterministic engine comparing logged intake vs weight trend over rolling 2–3 weeks to compute true TDEE and auto-adjust the calorie goal weekly toward the health goal
+- [ ] **Lab results with AI extraction (InsideTracker-style)** — photo/PDF of a lab report → Gemini extracts biomarkers → per-date storage + trend charts + fed into the bio-age prompt (its biggest blind spot)
+- [ ] **Editable coach memory (Whoop "My Memory"-style)** — user-editable coach notes (injuries, dietary restrictions, schedule constraints) injected into every AI prompt
+- [x] **Daily behavior journal + correlations (Whoop Journal-style)** — one-tap behavior tags (alcohol, late caffeine, sauna, …) in `lib/journal.ts` → `data/journal.json`; `/api/journal`; JournalCard on Overview; the correlation engine generalized from supplements to factors (`CorrelationFactor`, supplements + behaviors) so the Correlations card shows next-day recovery deltas for behaviors too
+- [x] **Micronutrient tracking with supplement cross-referencing (beyond Cronometer)** — Gemini food schema extended with 12 per-food micros (`FoodMicros`); `lib/micros.ts` catalog with adult-male targets/upper limits + supplement-name keyword matching with unit conversion (incl. IU→mcg for vitamin D); MicrosPanel on Nutrition tab stacks food + taken-supplement contributions per nutrient vs daily target
+- [x] **Resilience score (Oura-style)** — deterministic recent-7d vs own-28d-baseline scoring of HRV/resting HR/stress/Body Battery recharge in `lib/resilience.ts`; `/api/resilience`; ResilienceCard with 14-day series + component chips on Overview
+- [x] **Metric compare chart (Garmin Connect+ dashboard-style)** — `/api/trends` unified per-day metric rows (cache-only); MetricCompareChart with two metric pickers rendering stacked panels sharing one x-axis (HRV, sleep, resting HR, steps, stress, Body Battery, calories, protein)
 - [ ] User preferences — dark mode, theme
 - [x] **Barcode scanning** — native BarcodeDetector + manual fallback, Open Food Facts lookup
 - [ ] Weekly summary view — avg macros vs goals
