@@ -88,6 +88,9 @@ Return JSON:
 }
 
 Rules:
+- First decide what KIND of request this is:
+  - PRODUCT LOOKUP — the request names a specific commercial product, brand, or formula (e.g. "Novos Core", "AG1", "Thorne Basic Nutrients 2", a barcode-less label name). Return exactly ONE suggestion for the product AS A WHOLE — "name" is the product's name, "brand" is the manufacturer. Do NOT split it into its individual active ingredients as separate suggestions, even if it is a multi-ingredient blend — the user wants one stack entry they can check off, matching how the product is actually taken and labeled. List the key active ingredients inside "description" instead (e.g. "Proprietary longevity blend incl. NMN, resveratrol, quercetin, fisetin, spermidine…"). For "dose", use the product's total labeled per-serving blend weight in mg or g if known; if unknown, give your best realistic estimate for that serving size — never leave it representing a single sub-ingredient's dose. Put capsule/serving directions (e.g. "take 2 capsules") in "usageTip"
+  - NEED/GOAL — the request describes a symptom, goal, or need (e.g. "something for sleep", "reduce inflammation") rather than naming a product. In this case suggest 1–3 individual, single-ingredient supplements as normal
 - Only recommend evidence-backed supplements${profile?.goal ? "\n- Align suggestions toward the user's stated health goal" : ""}
 - Dose must be a realistic, commonly available amount, appropriate for this user's age, sex, and body weight
 ${DOSAGE_OVERLAP_RULES}
