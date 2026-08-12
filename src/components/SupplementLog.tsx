@@ -178,7 +178,8 @@ export default function SupplementLog({ date }: Props) {
         body: JSON.stringify({ action: "generate-tips" }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      // Heartbeat-streamed route: status is 200 once streaming starts, errors are in-body
+      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       const tips: { id: string; usageTip: string; description: string }[] = data.tips ?? [];
       await Promise.all(
         tips.map((t) =>
@@ -210,7 +211,7 @@ export default function SupplementLog({ date }: Props) {
         body: JSON.stringify({ action: "recommend" }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setRecommendations(data.recommendations ?? []);
     } catch (e) {
       setRecsError(e instanceof Error ? e.message : String(e));

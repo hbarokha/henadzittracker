@@ -226,7 +226,8 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
         body: JSON.stringify({ action: "identify-text", prompt: descPrompt }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      // Heartbeat-streamed route: status is 200 once streaming starts, errors are in-body
+      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setDescSuggestions(data.supplements ?? []);
     } catch (e) {
       setDescError(e instanceof Error ? e.message : String(e));
@@ -268,7 +269,7 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
         body: JSON.stringify({ action: "identify-image", base64: photoBase64, mimeType: photoMime }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setPhotoSuggestions(data.supplements ?? []);
     } catch (e) {
       setPhotoError(e instanceof Error ? e.message : String(e));

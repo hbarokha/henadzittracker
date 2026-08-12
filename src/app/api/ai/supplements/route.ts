@@ -4,6 +4,7 @@ import { getAllSupplements, getAdherenceForRange, type Supplement } from "@/lib/
 import { getAllEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
+import { heartbeatJson } from "@/lib/heartbeat";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
@@ -65,10 +66,18 @@ async function callGemini(parts: Array<{ text: string } | { inline_data: { mime_
   return JSON.parse(text);
 }
 
+const ACTIONS = ["identify-text", "identify-image", "recommend", "generate-tips"] as const;
+
 export async function POST(req: Request) {
   const body = await req.json();
+  if (!ACTIONS.includes(body.action)) {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
 
-  try {
+  // Everything below runs inside a heartbeat-streamed response: `generate-tips`
+  // on a full stack takes ~50s, past Azure SWA's ~45s gateway kill. Status is
+  // always 200 and errors arrive as {"error": …} in the body — see heartbeat.ts.
+  return heartbeatJson(async () => {
     // ── identify from text prompt ────────────────────────────────────────────
     if (body.action === "identify-text") {
       const { prompt } = body as { prompt: string };
@@ -103,7 +112,7 @@ ${DOSAGE_OVERLAP_RULES}
         { text: systemPrompt },
         { text: `User request: ${prompt}` },
       ]);
-      return NextResponse.json(result);
+      return result;
     }
 
     // ── identify from photo ──────────────────────────────────────────────────
@@ -133,7 +142,7 @@ Rules:
         { text: systemPrompt },
         { inline_data: { mime_type: mimeType, data: base64 } },
       ]);
-      return NextResponse.json(result);
+      return result;
     }
 
     // ── personalized recommendations ─────────────────────────────────────────
@@ -257,7 +266,7 @@ ${DOSAGE_OVERLAP_RULES}
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([{ text: systemPrompt }]);
-      return NextResponse.json(result);
+      return result;
     }
 
     // ── generate how/when tips for existing stack ────────────────────────────
@@ -275,7 +284,7 @@ ${DOSAGE_OVERLAP_RULES}
         readGarminCache("bloodpressure"),
       ]);
 
-      if (!allSupps.length) return NextResponse.json({ tips: [] });
+      if (!allSupps.length) return { tips: [] };
 
       const last7 = Array.from({ length: 7 }, (_, i) => isoLocalDate(-i));
       const adherence = await getAdherenceForRange(allSupps.map((s) => s.id), last7);
@@ -343,11 +352,10 @@ ${DOSAGE_OVERLAP_RULES}
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([{ text: prompt }]);
-      return NextResponse.json(result);
+      return result;
     }
 
-    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
-  } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
-  }
+    // Unreachable — body.action is validated against ACTIONS above
+    return {};
+  });
 }
