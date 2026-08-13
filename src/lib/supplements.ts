@@ -14,6 +14,15 @@ export interface Supplement {
   active: boolean;
   description?: string;
   usageTip?: string;
+  /**
+   * The product's actual active ingredients, as printed on the label. The ONLY
+   * trusted source for combo/blend overlap analysis — models reliably invent
+   * plausible-but-wrong formulations for branded blends (and confuse sibling
+   * products from the same brand), so the AI prompts may only reason about
+   * ingredients recorded here or read off a label photo, never from memory.
+   * Free text (comma-separated, doses optional): "Ca-AKG 2g, fisetin 150mg, …".
+   */
+  ingredients?: string;
   createdAt: string;
 }
 
@@ -54,12 +63,18 @@ export async function addSupplement(s: Omit<Supplement, "id" | "createdAt" | "ac
 
 export async function updateSupplement(
   id: string,
-  patch: Partial<Pick<Supplement, "description" | "usageTip" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay">>
+  patch: Partial<Pick<Supplement, "description" | "usageTip" | "ingredients" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay">>
 ): Promise<void> {
   await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
     const s = data.supplements.find((x) => x.id === id);
     if (!s) return { write: false };
-    Object.assign(s, patch);
+    // Only assign keys the caller actually sent — callers patch a subset (the inline
+    // edit form sends name/dose/unit/pills/time; the tips action sends description/
+    // usageTip), and a blind Object.assign would overwrite every omitted field with
+    // undefined, silently wiping tips and recorded ingredients. Pass "" to clear.
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) (s as unknown as Record<string, unknown>)[k] = v;
+    }
     return { write: true };
   });
 }
@@ -199,10 +214,27 @@ export interface PlanCandidate {
   timeOfDay: TimeOfDay;
   description?: string;
   usageTip?: string;
+  ingredients?: string;
   active: boolean;         // currently in the daily stack?
   recentTaken: number;     // times actually taken in the recent window
   suggested: boolean;      // pre-select for next week?
+  /**
+   * Why this row is (or isn't) pre-checked, in one sentence. Computed from the
+   * stack + check-off history in code — the planner's suggestion is deterministic,
+   * so its explanation must be too rather than an AI rationalisation of it.
+   */
+  reason: string;
   lastUsed: string;        // canonical entry createdAt
+}
+
+/** Plain-language account of the active/recentTaken combination behind `suggested`. */
+function planReason(active: boolean, recentTaken: number, days: number, lastUsed: string): string {
+  const window = `the last ${days} days`;
+  const times = `${recentTaken}×`;
+  if (active && recentTaken > 0) return `In your stack and taken ${times} in ${window}.`;
+  if (active && recentTaken === 0) return `In your stack, but not checked off once in ${window} — keep it only if you actually intend to take it.`;
+  if (!active && recentTaken > 0) return `Not in your current stack, yet taken ${times} in ${window} — looks like you're still on it.`;
+  return `Not in your stack and not taken in ${window}. Last set up ${lastUsed.slice(0, 10)}.`;
 }
 
 export async function getSupplementHistory(recentDays = 14): Promise<PlanCandidate[]> {
@@ -243,9 +275,11 @@ export async function getSupplementHistory(recentDays = 14): Promise<PlanCandida
       timeOfDay: canonical.timeOfDay,
       description: canonical.description,
       usageTip: canonical.usageTip,
+      ingredients: canonical.ingredients,
       active,
       recentTaken,
       suggested: active || recentTaken > 0,
+      reason: planReason(active, recentTaken, recentDays, canonical.createdAt),
       lastUsed: canonical.createdAt,
     });
   }
@@ -267,6 +301,11 @@ export interface PlanItem {
   unit: SupplementUnit;
   pills?: number;
   timeOfDay: TimeOfDay;
+  // Carried only onto NEWLY created entries — an existing entry keeps its own
+  // stored copy (see the update branch below).
+  description?: string;
+  usageTip?: string;
+  ingredients?: string;
 }
 
 // Reconcile the active stack to exactly the chosen items. Existing entries are
@@ -289,7 +328,7 @@ export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount:
         entry.unit = it.unit;
         entry.pills = it.pills;
         entry.timeOfDay = it.timeOfDay;
-        // description / usageTip intentionally left untouched
+        // description / usageTip / ingredients intentionally left untouched
       } else {
         entry = {
           id: `${base}${(n++).toString(36)}`,
@@ -299,6 +338,11 @@ export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount:
           unit: it.unit,
           pills: it.pills,
           timeOfDay: it.timeOfDay,
+          // A candidate re-added from history brings its notes and verified label
+          // with it, so a replanned supplement isn't stripped back to a bare row.
+          description: it.description,
+          usageTip: it.usageTip,
+          ingredients: it.ingredients,
           active: true,
           createdAt: new Date().toISOString(),
         };

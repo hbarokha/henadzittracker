@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
 import { IconCalendar, IconPill } from "@/components/icons";
+import { InfoBadge, TipBadge } from "./supplements/shared";
 
 interface PlanCandidate {
   id: string;
@@ -12,9 +13,13 @@ interface PlanCandidate {
   unit: SupplementUnit;
   pills?: number;
   timeOfDay: TimeOfDay;
+  description?: string;
+  usageTip?: string;
+  ingredients?: string;
   active: boolean;
   recentTaken: number;
   suggested: boolean;
+  reason: string;
   lastUsed: string;
 }
 
@@ -31,6 +36,13 @@ interface Row {
   included: boolean;
   // frozen suggestion, so "reset to suggested" and the hint work
   sug: { included: boolean; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay } | null;
+  // Carried from history so the plan screen shows the same what-it-does / how-to-take
+  // context as the AI Recommendations cards, and so a re-added row keeps them.
+  description?: string;
+  usageTip?: string;
+  ingredients?: string;
+  /** Why this row is / isn't pre-checked — empty for rows the user just added. */
+  reason?: string;
   active: boolean;
   recentTaken: number;
   isNew: boolean;
@@ -60,6 +72,10 @@ function candidateToRow(c: PlanCandidate): Row {
     timeOfDay: sug.timeOfDay,
     included: c.suggested,
     sug,
+    description: c.description,
+    usageTip: c.usageTip,
+    ingredients: c.ingredients,
+    reason: c.reason,
     active: c.active,
     recentTaken: c.recentTaken,
     isNew: false,
@@ -163,6 +179,10 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
           unit: r.unit,
           pills: Number(r.pills) || 1,
           timeOfDay: r.timeOfDay,
+          // Only used when the row creates a new entry; an existing id keeps its own.
+          description: r.description,
+          usageTip: r.usageTip,
+          ingredients: r.ingredients,
         }));
       const res = await fetch("/api/supplements", {
         method: "POST",
@@ -295,6 +315,11 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
                             <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--amber-dim)", color: "var(--amber)", fontFamily: "var(--font-mono)" }}>SUGGESTED</span>
                           )}
                         </div>
+                        {/* Why the box is ticked (or isn't) — computed from stack + check-off
+                            history, so the explanation always matches the pre-selection. */}
+                        {r.reason && (
+                          <p className="text-[11px] leading-snug mt-1.5" style={{ color: "var(--text-muted)" }}>{r.reason}</p>
+                        )}
                       </>
                     )}
                   </div>
@@ -333,6 +358,10 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
                         </>
                       )}
                     </div>
+                    {/* Same what-it-does / how-to-take context as the AI Recommendations
+                        cards, so the plan screen isn't a blind dose-only decision. */}
+                    {r.description && <InfoBadge text={r.description} />}
+                    {r.usageTip && <TipBadge text={r.usageTip} />}
                   </div>
                 )}
               </div>

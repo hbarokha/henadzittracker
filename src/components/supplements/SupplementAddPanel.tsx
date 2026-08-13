@@ -206,7 +206,7 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
     setAddingId(key);
     await postSupplement({
       name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
-      description: s.description, usageTip: s.usageTip,
+      description: s.description, usageTip: s.usageTip, ingredients: s.ingredients,
     });
     setAddingId(null);
     await finishAdd();

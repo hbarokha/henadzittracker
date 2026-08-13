@@ -139,9 +139,10 @@ export async function POST(req: Request) {
   // Regenerate only when the data the model would see has actually changed since the
   // cached summary was generated (syncedAt timestamps excluded — they change on
   // every sync even when the values don't)
-  // promptVersion invalidates caches when the output structure changes (v2: training section)
+  // promptVersion invalidates caches when the output structure changes (v2: training section;
+  // v3: supplement ingredient-grounding rule — v2 answers may assert invented blend contents)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { promptVersion: 2, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
+    { promptVersion: 3, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -309,7 +310,12 @@ ${supplements.map((s) => {
     const extra = [s.description, s.usageTip].filter(Boolean).join("; ");
     const label = [s.brand, s.name].filter(Boolean).join(" ");
     const pillsStr = s.pills && s.pills > 1 ? ` × ${s.pills} pills = ${s.dose * s.pills}${s.unit} total/day` : "/day";
-    return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${extra ? ` | notes: ${extra}` : ""}`;
+    // Stated explicitly either way — the grounding rule in the prompt lets the model
+    // reason about a blend's contents ONLY from a verified list, never from memory.
+    const ing = s.ingredients?.trim()
+      ? ` | LABEL INGREDIENTS (verified): ${s.ingredients.trim()}`
+      : ` | LABEL INGREDIENTS: NOT RECORDED`;
+    return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${ing}${extra ? ` | notes: ${extra}` : ""}`;
   }).join("\n")}`
   : "No supplements configured"}
 

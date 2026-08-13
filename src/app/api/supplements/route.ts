@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   if (body.action === "update") {
-    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: sanitizeTime(body.timeOfDay) });
+    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, ingredients: body.ingredients, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: sanitizeTime(body.timeOfDay) });
     return NextResponse.json({ ok: true });
   }
   if (body.action === "plan") {
@@ -64,6 +64,9 @@ export async function POST(req: Request) {
         unit: it.unit,
         pills: it.pills ? Number(it.pills) : undefined,
         timeOfDay: sanitizeTime(it.timeOfDay),
+        description: it.description || undefined,
+        usageTip: it.usageTip || undefined,
+        ingredients: it.ingredients || undefined,
       }));
     const res = await applyWeeklyPlan(items);
     return NextResponse.json({ ok: true, ...res });
@@ -80,6 +83,7 @@ export async function POST(req: Request) {
     timeOfDay: sanitizeTime(body.timeOfDay),
     description: body.description,
     usageTip: body.usageTip,
+    ingredients: body.ingredients,
   });
   return NextResponse.json(entry);
 }

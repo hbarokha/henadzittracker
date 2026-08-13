@@ -5,6 +5,7 @@ import { getAllEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
 import { heartbeatJson } from "@/lib/heartbeat";
+import { lookupIngredients } from "@/lib/ingredientLookup";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
@@ -14,6 +15,7 @@ const SUPP_SCHEMA = `{
   "dose": "number — typical recommended dose",
   "unit": "mg|mcg|IU|g",
   "timeOfDay": "morning|afternoon|evening|any — NEVER use 'daily'; use 'any' for supplements taken any time of day",
+  "ingredients": "string|null — ONLY an ingredient list actually READ OFF a label in a supplied photo (comma-separated, amounts per serving where shown). null in every other case — never recall a branded product's formulation from memory",
   "description": "string — 1–2 sentences: what it is and its primary benefits",
   "usageTip": "string — 1–2 sentences: best practices (timing, food/water, interactions to avoid)",
   "reason": "string — 1 sentence: why this matches the request"
@@ -41,11 +43,18 @@ function stackLine(s: Supplement): string {
   const doseStr = pills > 1
     ? `${s.dose}${s.unit} × ${pills} pills = ${s.dose * pills}${s.unit} total/day`
     : `${s.dose}${s.unit}/day`;
-  return `- ${label}: ${doseStr} | timing: ${s.timeOfDay}${s.description ? ` | ${s.description}` : ""}`;
+  // Ingredients are stated explicitly (recorded vs not) because the overlap rules below
+  // forbid guessing a blend's formulation — the model must see which it is.
+  const ing = s.ingredients?.trim()
+    ? ` | LABEL INGREDIENTS (verified): ${s.ingredients.trim()}`
+    : ` | LABEL INGREDIENTS: NOT RECORDED`;
+  return `- ${label}: ${doseStr} | timing: ${s.timeOfDay}${ing}${s.description ? ` | ${s.description}` : ""}`;
 }
 
 const DOSAGE_OVERLAP_RULES = `- DOSAGE: evaluate every dose as the TOTAL daily amount (dose × pills). Judge it against the effective range and the tolerable upper intake level for THIS user's age, sex, and weight — explicitly flag anything under-dosed or over-dosed
-- OVERLAPS: treat combo products (multivitamins, ZMA, electrolyte mixes, greens powders) as containing their typical ingredients; sum the SAME nutrient across ALL products before judging dose or suggesting more of it, and call out any cumulative total that approaches a safety limit
+- OVERLAPS — GROUNDING RULE (critical): NEVER state or assume what a branded multi-ingredient product contains from memory. Model recall of proprietary formulations is unreliable and frequently invents plausible-but-absent ingredients, and confuses sibling products sold under one brand (e.g. a brand's "core" blend vs its separate NMN product). You may ONLY reason about ingredients that are explicitly listed on that entry's "LABEL INGREDIENTS (verified)" text. If an entry says "NOT RECORDED", treat its contents as UNKNOWN: do not name any ingredient for it, do not claim or deny an overlap with it, and instead say its formulation is not recorded and ask the user to add the label ingredients so overlaps can be checked
+- OVERLAPS — arithmetic: for ingredients that ARE recorded, sum the SAME nutrient across ALL products before judging dose or suggesting more of it, and call out any cumulative total that approaches a safety limit
+- Generic single-ingredient entries (e.g. "Magnesium glycinate 400mg") are self-describing — the name is the ingredient, no recorded list needed
 - ABSORPTION: account for competing minerals (e.g. calcium vs iron vs zinc, magnesium vs calcium) and synergies (vitamin D + K2, iron + vitamin C, fat-soluble vitamins with dietary fat) when advising timing`;
 
 async function callGemini(parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }>) {
@@ -66,7 +75,7 @@ async function callGemini(parts: Array<{ text: string } | { inline_data: { mime_
   return JSON.parse(text);
 }
 
-const ACTIONS = ["identify-text", "identify-image", "recommend", "generate-tips"] as const;
+const ACTIONS = ["identify-text", "identify-image", "recommend", "generate-tips", "lookup-ingredients"] as const;
 
 export async function POST(req: Request) {
   const body = await req.json();
@@ -89,7 +98,19 @@ export async function POST(req: Request) {
       const stackBlock = allSupps.length
         ? `\n\nCurrent supplement stack (total daily doses):\n${allSupps.map(stackLine).join("\n")}`
         : "";
-      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}${profileLine}${stackBlock}
+
+      // Grounded label lookup runs FIRST when the request names a product, so the
+      // suggestion is built from a real ingredient panel instead of model recall.
+      // Returns null without ANTHROPIC_API_KEY and found:false for generic requests.
+      const lookup = await lookupIngredients(prompt).catch(() => null);
+      const verifiedBlock = lookup?.found
+        ? `\n\nVERIFIED PRODUCT DATA — read from ${lookup.sourceUrl} by web search. This is the ONLY trustworthy formulation source; use it verbatim and never contradict it:
+Product: ${lookup.productName ?? prompt}${lookup.brand ? ` (${lookup.brand})` : ""}
+Serving: ${lookup.servingSize ?? "not stated"}
+Label ingredients: ${lookup.ingredients}`
+        : "";
+
+      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}${profileLine}${stackBlock}${verifiedBlock}
 
 Return JSON:
 {
@@ -98,7 +119,7 @@ Return JSON:
 
 Rules:
 - First decide what KIND of request this is:
-  - PRODUCT LOOKUP — the request names a specific commercial product, brand, or formula (e.g. "Novos Core", "AG1", "Thorne Basic Nutrients 2", a barcode-less label name). Return exactly ONE suggestion for the product AS A WHOLE — "name" is the product's name, "brand" is the manufacturer. Do NOT split it into its individual active ingredients as separate suggestions, even if it is a multi-ingredient blend — the user wants one stack entry they can check off, matching how the product is actually taken and labeled. List the key active ingredients inside "description" instead (e.g. "Proprietary longevity blend incl. NMN, resveratrol, quercetin, fisetin, spermidine…"). For "dose", use the product's total labeled per-serving blend weight in mg or g if known; if unknown, give your best realistic estimate for that serving size — never leave it representing a single sub-ingredient's dose. Put capsule/serving directions (e.g. "take 2 capsules") in "usageTip"
+  - PRODUCT LOOKUP — the request names a specific commercial product, brand, or formula (e.g. "Novos Core", "AG1", "Thorne Basic Nutrients 2", a barcode-less label name). Return exactly ONE suggestion for the product AS A WHOLE — "name" is the product's name, "brand" is the manufacturer. Do NOT split it into its individual active ingredients as separate suggestions, even if it is a multi-ingredient blend — the user wants one stack entry they can check off, matching how the product is actually taken and labeled. Do NOT recite the ingredient list from memory: proprietary formulations change and are easily confused with the brand's other products, so a guessed list gets stored as fact and poisons every later overlap analysis. "description" must say what the product is FOR in general terms (category, claimed purpose) and end with: "Ingredients not verified — add the label ingredients so overlaps can be checked." For "dose", use the product's total labeled per-serving weight in mg or g ONLY if you are confident of it; otherwise return a round placeholder for one serving and say in "usageTip" that the dose should be corrected from the label. Put serving directions in "usageTip" only if you are confident of the actual serving form (do not assume capsules — many products are powders or liquids)
   - NEED/GOAL — the request describes a symptom, goal, or need (e.g. "something for sleep", "reduce inflammation") rather than naming a product. In this case suggest 1–3 individual, single-ingredient supplements as normal
 - Only recommend evidence-backed supplements${profile?.goal ? "\n- Align suggestions toward the user's stated health goal" : ""}
 - Dose must be a realistic, commonly available amount, appropriate for this user's age, sex, and body weight
@@ -112,7 +133,26 @@ ${DOSAGE_OVERLAP_RULES}
         { text: systemPrompt },
         { text: `User request: ${prompt}` },
       ]);
-      return result;
+
+      // Overwrite whatever the model put in `ingredients` with the verified list —
+      // the lookup's cited panel outranks anything generated here.
+      if (lookup?.found && Array.isArray(result?.supplements) && result.supplements.length === 1) {
+        result.supplements[0].ingredients = lookup.ingredients;
+        result.supplements[0].ingredientsSource = lookup.sourceUrl;
+      }
+      return { ...result, lookup: lookup ?? undefined };
+    }
+
+    // ── grounded label lookup for an entry already in the stack ──────────────
+    if (body.action === "lookup-ingredients") {
+      const { name, brand } = body as { name: string; brand?: string };
+      const query = [brand, name].filter(Boolean).join(" ").trim();
+      if (!query) return { found: false, sources: [], note: "No product name given" };
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return { found: false, sources: [], note: "Ingredient lookup needs ANTHROPIC_API_KEY — enter the label manually" };
+      }
+      const lookup = await lookupIngredients(query);
+      return (lookup ?? { found: false, sources: [], note: "Lookup unavailable" }) as unknown as Record<string, unknown>;
     }
 
     // ── identify from photo ──────────────────────────────────────────────────
@@ -134,8 +174,9 @@ Rules:
 - Extract the exact name and dose shown on the label
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
-- If the identified supplement overlaps with a nutrient already in the current stack (including inside combo products), state the cumulative daily total and whether it is safe in "usageTip"
-- If the label is unclear, make a best guess
+- If a Supplement Facts / ingredient panel is legible in the photo, TRANSCRIBE it into "ingredients" (comma-separated, with the per-serving amount where shown). This photo is the one trustworthy source of a blend's formulation — transcribe only what is actually visible, never fill gaps from memory; use null if no panel is legible
+- Only claim an overlap with the current stack when BOTH sides' ingredients are known (transcribed here, or listed as verified in the stack above). State the cumulative daily total in "usageTip" in that case; where a stack entry's ingredients are NOT RECORDED, say the overlap cannot be checked until its label is added
+- If the label is unclear, make a best guess for name/dose only
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([
@@ -193,7 +234,8 @@ Rules:
       const weightTrend = weightRows.length >= 2
         ? `${(weightRows[weightRows.length - 1].weightKg - weightRows[0].weightKg).toFixed(1)} kg over ${weightRows.length} entries`
         : null;
-      const existing = allSupps.map((s) => `${stackLine(s)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`);
+      // ids are exposed so the model can target adjustments/removals at a specific entry
+      const existing = allSupps.map((s) => `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`);
 
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -245,28 +287,96 @@ HRV status: ${na(sleep.hrvStatus)}`
       ].filter((l) => l !== undefined).join("\n");
 
       const systemPrompt = `You are a certified sports nutritionist and supplement expert.
-Analyze the comprehensive health data below and suggest 4–6 supplements the user is NOT already taking that would genuinely benefit them based on specific signals in their data.
+Review the user's ENTIRE supplement stack against the health data below and return three kinds of change: what to ADD, what to ADJUST, and what to STOP. A good review is not just additions — an over-dosed, redundant, unused, or no-longer-justified supplement costs the user money and can cost them health, so say so.
 
 ${contextBlock}
 
 Return JSON:
 {
-  "recommendations": [${SUPP_SCHEMA}]
+  "recommendations": [${SUPP_SCHEMA}],
+  "adjustments": [
+    {
+      "id": "string — the exact id: value of the stack entry to change",
+      "name": "string — that entry's name, for display",
+      "change": "increase|decrease|timing — what to change",
+      "currentDose": "number — its current TOTAL daily dose (dose × pills)",
+      "suggestedDose": "number — the new TOTAL daily dose; equal to currentDose when change is 'timing'",
+      "unit": "mg|mcg|IU|g — unchanged from the entry",
+      "timeOfDay": "morning|afternoon|evening|any — the suggested timing (repeat the current one unless change is 'timing')",
+      "reason": "string — 1–2 sentences citing the specific dose/metric/overlap that drives the change"
+    }
+  ],
+  "removals": [
+    {
+      "id": "string — the exact id: value of the stack entry to drop",
+      "name": "string — that entry's name, for display",
+      "reason": "string — 1–2 sentences: why it is no longer worth taking"
+    }
+  ]
 }
 
-Rules:
-- Do NOT suggest anything already in the "Current Supplement Stack" — including the same nutrient hidden inside a combo product (multivitamin, ZMA, electrolyte mix); check ingredient-level overlap, not just product names
-${DOSAGE_OVERLAP_RULES}
-- Every recommendation's "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
+Rules for ADD (recommendations), 2–5 items:
+- Do NOT suggest anything already in the "Current Supplement Stack" — including the same nutrient hidden inside a combo product whose ingredients are recorded; check ingredient-level overlap, not just product names
+- Every "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
 - Suggested doses must be tailored to this user's age, sex, and body weight, and must stay safe when ADDED ON TOP of the current stack's cumulative totals
-- Prioritise the most impactful gaps first based on the data; if a health goal is stated, weight recommendations toward it
+- Prioritise the most impactful gaps first; if a health goal is stated, weight recommendations toward it
+
+Rules for ADJUST (adjustments), 0–5 items — check EVERY entry for these:
+- Total daily dose below the effective range for this user's age/sex/weight → increase
+- Total daily dose approaching or above the tolerable upper limit, alone or once summed with the same nutrient in other products → decrease
+- Timing that undercuts absorption (competing minerals taken together, fat-soluble vitamins away from the fattiest meal, stimulating supplements in the evening) → timing
+- Never propose an adjustment that leaves the dose unchanged AND the timing unchanged — omit the entry instead
+
+Rules for STOP (removals), 0–4 items — a supplement earns removal when:
+- Its nutrient is already fully covered by another product in the stack (state which one)
+- 7-day adherence is 0–1/7, showing it is not actually being taken
+- The data no longer supports it (the deficit or symptom it targets is not present in these metrics)
+- Its cumulative total with other products exceeds the safe upper limit and cutting the weaker product is the cleanest fix
+- Be conservative: if a supplement is reasonable but not clearly redundant, unused, or unsafe, leave it alone rather than padding this list
+
+Global rules:
+${DOSAGE_OVERLAP_RULES}
+- "id" values in adjustments and removals MUST be copied exactly from the stack list — never invent one, and never list the same id in both arrays
 - Consider age, sex, weight, activity level, VO2 max, body composition, blood pressure, training load, nutrition gaps (low protein/fat/calories), sleep quality, HRV, stress, and adherence patterns together
 - unit must be exactly: mg, mcg, IU, or g
 - timeOfDay must be exactly: morning, afternoon, evening, or any
+- Return all three keys even when an array is empty
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([{ text: systemPrompt }]);
-      return result;
+
+      // Drop anything targeting an id that isn't actually in the stack — a hallucinated
+      // id would render an "Apply" button that silently does nothing.
+      const byId = new Map(allSupps.map((s) => [s.id, s]));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const keepReal = (rows: unknown): any[] =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (Array.isArray(rows) ? rows : []).filter((r: any) => byId.has(String(r?.id)));
+
+      // The model reliably dresses up "your adherence is low" as change:"increase" with
+      // suggestedDose === currentDose. That renders as "2000mg → 2000mg" and Applying it
+      // is a no-op, so only keep adjustments that move the dose or the timing.
+      const adjustments = keepReal(result?.adjustments).filter((a) => {
+        const s = byId.get(String(a.id))!;
+        const currentTotal = s.dose * (s.pills && s.pills > 1 ? s.pills : 1);
+        const suggested = Number(a.suggestedDose);
+        const doseMoved = Number.isFinite(suggested) && suggested > 0
+          && Math.abs(suggested - currentTotal) / currentTotal > 0.01;
+        const timeMoved = typeof a.timeOfDay === "string" && a.timeOfDay !== s.timeOfDay;
+        if (!doseMoved && !timeMoved) return false;
+        // Report the true current total rather than whatever the model echoed back.
+        a.currentDose = currentTotal;
+        a.unit = s.unit;
+        if (!timeMoved) a.timeOfDay = s.timeOfDay;
+        if (!doseMoved) { a.suggestedDose = currentTotal; a.change = "timing"; }
+        return true;
+      });
+
+      return {
+        recommendations: Array.isArray(result?.recommendations) ? result.recommendations : [],
+        adjustments,
+        removals: keepReal(result?.removals),
+      };
     }
 
     // ── generate how/when tips for existing stack ────────────────────────────

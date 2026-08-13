@@ -16,6 +16,30 @@ interface SupplementWithLog extends Supplement {
 
 interface Adherence { week: Record<string, number>; weekDays: number; month: Record<string, number>; monthDays: number }
 
+/** A dose/timing change the AI proposes for an entry already in the stack. */
+interface Adjustment {
+  id: string;
+  name: string;
+  change: "increase" | "decrease" | "timing";
+  currentDose: number;
+  suggestedDose: number;
+  unit: SupplementUnit;
+  timeOfDay: TimeOfDay;
+  reason: string;
+}
+
+/** A stack entry the AI proposes dropping. */
+interface Removal { id: string; name: string; reason: string }
+
+/** Result of the grounded web lookup of a product's label ingredients. */
+interface LookupResult {
+  found: boolean;
+  ingredients?: string;
+  servingSize?: string;
+  sourceUrl?: string;
+  note?: string;
+}
+
 // Green ≥85%, amber ≥50%, coral below — mirrors the BP/battery chart color language.
 function adherenceColor(taken: number, total: number): string {
   if (total === 0) return "var(--text-dim)";
@@ -53,8 +77,15 @@ export default function SupplementLog({ date }: Props) {
   // Recommendations
   const [recsLoading, setRecsLoading] = useState(false);
   const [recommendations, setRecommendations] = useState<AISuggestion[]>([]);
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [removals, setRemovals] = useState<Removal[]>([]);
   const [recsError, setRecsError] = useState<string | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
+  // Grounded label-ingredient lookup (per supplement id)
+  const [lookupId, setLookupId] = useState<string | null>(null);
+  const [lookupResult, setLookupResult] = useState<Record<string, LookupResult>>({});
 
   // Generate tips
   const [tipsLoading, setTipsLoading] = useState(false);
@@ -62,7 +93,7 @@ export default function SupplementLog({ date }: Props) {
 
   // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning" });
+  const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay; ingredients: string }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning", ingredients: "" });
   const [editSaving, setEditSaving] = useState(false);
 
   // ── data loading ───────────────────────────────────────────────────────────
@@ -141,7 +172,7 @@ export default function SupplementLog({ date }: Props) {
 
   function startEdit(s: SupplementWithLog) {
     setEditingId(s.id);
-    setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay });
+    setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay, ingredients: s.ingredients || "" });
     setExpandedId(null);
   }
 
@@ -159,6 +190,7 @@ export default function SupplementLog({ date }: Props) {
         unit: editForm.unit,
         pills: Number(editForm.pills) || 1,
         timeOfDay: editForm.timeOfDay,
+        ingredients: editForm.ingredients.trim(),
       }),
     });
     setEditSaving(false);
@@ -204,6 +236,8 @@ export default function SupplementLog({ date }: Props) {
     setRecsLoading(true);
     setRecsError(null);
     setRecommendations([]);
+    setAdjustments([]);
+    setRemovals([]);
     try {
       const resp = await fetch("/api/ai/supplements", {
         method: "POST",
@@ -213,10 +247,70 @@ export default function SupplementLog({ date }: Props) {
       const data = await resp.json();
       if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setRecommendations(data.recommendations ?? []);
+      setAdjustments(data.adjustments ?? []);
+      setRemovals(data.removals ?? []);
     } catch (e) {
       setRecsError(e instanceof Error ? e.message : String(e));
     } finally {
       setRecsLoading(false);
+    }
+  }
+
+  // Apply a proposed dose/timing change to the live entry. The suggested dose is the
+  // TOTAL daily amount, so it's divided back out across the entry's pills-per-day.
+  async function applyAdjustment(a: Adjustment) {
+    const target = items.find((s) => s.id === a.id);
+    if (!target) return;
+    const pills = target.pills && target.pills > 1 ? target.pills : 1;
+    setApplyingId(a.id);
+    await fetch("/api/supplements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "update",
+        id: a.id,
+        dose: Math.round((a.suggestedDose / pills) * 100) / 100,
+        unit: a.unit,
+        timeOfDay: a.timeOfDay,
+      }),
+    });
+    setApplyingId(null);
+    setAdjustments((prev) => prev.filter((x) => x.id !== a.id));
+    await load();
+  }
+
+  async function applyRemoval(r: Removal) {
+    setApplyingId(r.id);
+    await remove(r.id);
+    setApplyingId(null);
+    setRemovals((prev) => prev.filter((x) => x.id !== r.id));
+  }
+
+  // ── AI: grounded label lookup ──────────────────────────────────────────────
+
+  // Fills the edit form's ingredients box from a cited product page rather than model
+  // memory. The user still reviews and saves — the source link is shown for checking.
+  async function lookupIngredientsFor(s: SupplementWithLog) {
+    setLookupId(s.id);
+    try {
+      const resp = await fetch("/api/ai/supplements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "lookup-ingredients", name: s.name, brand: s.brand }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
+      setLookupResult((prev) => ({ ...prev, [s.id]: data }));
+      if (data.found && data.ingredients) {
+        setEditForm((f) => ({ ...f, ingredients: data.ingredients }));
+      }
+    } catch (e) {
+      setLookupResult((prev) => ({
+        ...prev,
+        [s.id]: { found: false, note: e instanceof Error ? e.message : String(e) },
+      }));
+    } finally {
+      setLookupId(null);
     }
   }
 
@@ -591,6 +685,50 @@ export default function SupplementLog({ date }: Props) {
                       </select>
                     </div>
                   </div>
+                  {/* Label ingredients — the only source the AI is allowed to use when
+                      judging overlaps inside a multi-ingredient product. */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[9px] uppercase tracking-wide"
+                        style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Label ingredients</p>
+                      <button
+                        onClick={() => lookupIngredientsFor(s)}
+                        disabled={lookupId === s.id || !editForm.name.trim()}
+                        className="text-[9px] transition-colors disabled:opacity-50"
+                        style={{ color: "#38bdf8", fontFamily: "var(--font-mono)" }}>
+                        {lookupId === s.id ? "SEARCHING…" : "🔎 LOOK UP"}
+                      </button>
+                    </div>
+                    <textarea
+                      value={editForm.ingredients}
+                      onChange={(e) => setEditForm((f) => ({ ...f, ingredients: e.target.value }))}
+                      rows={2}
+                      placeholder="From the label, e.g. Ca-AKG 2g, fisetin 150mg, glycine 1g…"
+                      className="w-full rounded-lg px-2 py-1.5 text-xs focus:outline-none resize-none"
+                      style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}
+                    />
+                    {/* Source link, so a looked-up list can be checked against the real page
+                        before saving — the lookup fills the box, the user still confirms. */}
+                    {lookupResult[s.id] && (
+                      lookupResult[s.id].found ? (
+                        <p className="text-[9px] leading-snug" style={{ color: "var(--sage)" }}>
+                          Filled from{" "}
+                          <a href={lookupResult[s.id].sourceUrl} target="_blank" rel="noreferrer"
+                            className="underline" style={{ color: "#38bdf8" }}>
+                            {lookupResult[s.id].sourceUrl}
+                          </a>
+                          {lookupResult[s.id].servingSize ? ` · serving: ${lookupResult[s.id].servingSize}` : ""} — check it, then Save.
+                        </p>
+                      ) : (
+                        <p className="text-[9px] leading-snug" style={{ color: "var(--amber)" }}>
+                          {lookupResult[s.id].note ?? "No label found"} — enter it from the bottle.
+                        </p>
+                      )
+                    )}
+                    <p className="text-[9px] leading-snug" style={{ color: "var(--text-dim)" }}>
+                      Only needed for multi-ingredient blends. Without it the AI treats the contents as unknown rather than guessing.
+                    </p>
+                  </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setEditingId(null)}
@@ -661,9 +799,9 @@ export default function SupplementLog({ date }: Props) {
               <div className="flex items-center gap-2">
                 <span className="text-sm">🤖</span>
                 <p className="text-xs font-semibold"
-                  style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>AI Recommendations</p>
+                  style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>AI Stack Review</p>
                 <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                  based on your profile
+                  add · adjust · stop
                 </p>
               </div>
               <button onClick={loadRecommendations} disabled={recsLoading}
@@ -679,7 +817,7 @@ export default function SupplementLog({ date }: Props) {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                 </svg>
-                Generating personalized recommendations…
+                Reviewing your full stack…
               </div>
             )}
 
@@ -690,16 +828,72 @@ export default function SupplementLog({ date }: Props) {
               </div>
             )}
 
+            {/* Adjust — dose/timing changes to what's already in the stack */}
+            {!recsLoading && adjustments.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>Adjust</p>
+                {adjustments.map((a) => (
+                  <div key={a.id} className="rounded-xl p-3 space-y-2"
+                    style={{ background: "var(--bg-raised)", border: "1px solid rgba(251,191,36,0.25)" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold truncate"
+                          style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>{a.name}</p>
+                        <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                          {a.change === "timing"
+                            ? `${TIME_ICONS[a.timeOfDay]} move to ${TIME_LABELS[a.timeOfDay]}`
+                            : `${a.currentDose}${a.unit} → ${a.suggestedDose}${a.unit}/day`}
+                        </p>
+                      </div>
+                      <button onClick={() => applyAdjustment(a)} disabled={applyingId === a.id}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                        style={{ background: "rgba(251,191,36,0.15)", color: "var(--amber)", border: "1px solid rgba(251,191,36,0.25)" }}>
+                        {applyingId === a.id ? "…" : "Apply"}
+                      </button>
+                    </div>
+                    <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>{a.reason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Stop — entries the review says are redundant, unused, or unsafe */}
+            {!recsLoading && removals.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--coral)", fontFamily: "var(--font-mono)" }}>Consider stopping</p>
+                {removals.map((r) => (
+                  <div key={r.id} className="rounded-xl p-3 space-y-2"
+                    style={{ background: "var(--bg-raised)", border: "1px solid rgba(255,107,107,0.25)" }}>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-semibold truncate"
+                        style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>{r.name}</p>
+                      <button onClick={() => applyRemoval(r)} disabled={applyingId === r.id}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                        style={{ background: "rgba(255,107,107,0.12)", color: "var(--coral)", border: "1px solid rgba(255,107,107,0.25)" }}>
+                        {applyingId === r.id ? "…" : "Remove"}
+                      </button>
+                    </div>
+                    <p className="text-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>{r.reason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add */}
             {!recsLoading && recommendations.length > 0 && (
               <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--sage)", fontFamily: "var(--font-mono)" }}>Add</p>
                 {recommendations.map((r, i) => (
                   <SuggestionCard key={i} s={r} onAdd={saveSuggestion} adding={addingId === `${r.name}-${r.dose}`} />
                 ))}
               </div>
             )}
 
-            {!recsLoading && !recsError && recommendations.length === 0 && (
-              <p className="text-xs py-2" style={{ color: "var(--text-dim)" }}>No recommendations generated yet.</p>
+            {!recsLoading && !recsError && recommendations.length === 0 && adjustments.length === 0 && removals.length === 0 && (
+              <p className="text-xs py-2" style={{ color: "var(--text-dim)" }}>No changes suggested yet.</p>
             )}
           </div>
         </div>

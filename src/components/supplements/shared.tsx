@@ -13,6 +13,8 @@ export interface AISuggestion {
   description: string;
   usageTip: string;
   reason: string;
+  /** Label ingredients — only set when read off a label photo, never guessed. */
+  ingredients?: string;
 }
 
 export const TIME_ORDER: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
