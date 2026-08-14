@@ -20,6 +20,8 @@ A single-page daily health tracker. No login, no accounts — just open and log.
 - Log daily vitamins and supplements (name, dose, unit, frequency)
 - **Weekly plan screen** — toggle in the Supplements tab (Daily log / Weekly plan). Lists every supplement from history (active + previously-removed, deduped by name+brand) with a data-grounded suggestion pre-checked from recent use (active OR taken in the last 14 days). Each row shows the suggested dose/unit/pills/time, a one-line **reason** for its pre-selection (computed in `planReason()` from the active flag + 14-day check-off count, so the explanation can never drift from the suggestion it explains), and that supplement's stored description and usage tip (same `InfoBadge`/`TipBadge` pair as the AI Stack Review cards); description/tip/ingredients carry onto the entry when the plan re-creates it; apply the suggestion as-is or edit to choose your own. "Apply plan" reconciles the active stack to the checked set (reactivating + updating existing library entries by id so adherence history stays linked, creating new ones, deactivating the rest); the daily checklist reflects it immediately
 - Supplement library — save custom entries for one-tap logging
+- **Dosing schedules** — a supplement is due Every day / on chosen weekdays / every N days / on an N-on-N-off cycle (`lib/schedule.ts`, editable in the add form, the inline edit form and the weekly planner). The daily checklist only lists what's due today (the rest sit in a muted "Not scheduled today" group, still loggable), and **adherence is measured against scheduled days, not calendar days** — a Mon/Wed/Fri supplement taken 3× reads as 3/3, not 3/7. Every AI prompt states the schedule and the scheduled-day denominator, so the Stack Review can no longer read a deliberate cycle as neglect and propose dropping it
+- **Missing-label nudge** — `MissingLabelsCard` lists products the ingredient ledger can't account for (no recorded label, name isn't self-describing) with the consequence stated: overlaps and totals can't be checked. One tap runs the grounded web lookup per product or for all of them sequentially; each result shows its ingredients and source URL and is saved only when the user accepts it
 - Track adherence streak per supplement
 - Daily supplement checklist grouped by time of day (Morning / Afternoon / Evening / **Before bedtime** / Anytime) — slots are defined once in `lib/timeOfDay.ts` (type, order, labels, icons, colors, validation, prompt wording) and shared by the server routes, the AI prompts, the checklist, and the planner. "Evening" is the wind-down block, "Before bedtime" is the last thing before lights out (melatonin, glycine, sleep magnesium)
 - Add supplements by manual entry, text description (AI), or **photo of bottle/label with live camera support**
@@ -100,6 +102,14 @@ the official developer program is currently suspended as of 2024).
 - Body weight log — track weight over time with trend line; **optional body composition** logged alongside each weight (body fat %, muscle mass, body water %, bone mass) via an expandable section in the Body Weight card, surfaced in the recent-entries list and fed into the AI health summary's BODY COMPOSITION section (merged with Garmin scale data)
 - BMI calculated and displayed with healthy-range indicator
 - Health goal is injected into every Gemini request (AI summary, supplement recommendations, supplement tips, supplement text identification)
+
+### Blood Work (lab results)
+- Enter a panel by hand or **photograph / upload the report (image or PDF)** — `POST /api/ai/labs` has Gemini transcribe it into the known-marker catalog, then fills the manual form for review; nothing is saved until the user has seen every number (a misread decimal on a lab value is worse than no value)
+- 31-marker catalog in `lib/labs-catalog.ts` (lipids incl. ApoB/Lp(a), metabolic, inflammation, vitamins & minerals, hormones, liver/kidney, blood count) with reference ranges, tighter **optimal** ranges, and per-marker alternate units
+- **Values are stored exactly as the lab reported them** (value + unit) and converted for comparison — mmol/L vs mg/dL differ by country, and normalising on the way in would lose the original reading
+- Card on Overview (collapsible "Blood Work") shows out-of-range and sub-optimal markers first with status dots and a delta vs the previous panel; expand for all markers and panel history
+- Fed to the AI as facts with the status pre-computed ("LOW — below reference range", "in reference range but outside optimal") and the draw date attached, so stale readings are treated as stale: the health summary weights labs heavily in the **biological-age** estimate, the supplement Stack Review doses from measured levels (a 21 ng/mL vitamin D and a 58 ng/mL vitamin D call for opposite advice), and the chat has a `get_lab_results` tool
+- `GET/POST/DELETE /api/labs`; persisted to `data/labs.json`
 
 ### AI Health Summary
 - Auto-generates on page load via Gemini — no button press required
@@ -230,6 +240,7 @@ src/
         stress/trend/route.ts       GET — stress trend from cached files only (no Garmin calls)
         bloodpressure/trend/route.ts GET — BP trend (systolic/diastolic/pulse) from cached files only (no Garmin calls)
         sleep/trend/route.ts        GET — sleep score + duration trend from cached files only (no Garmin calls)
+      labs/route.ts                 GET/POST/DELETE — blood work panels + latest value per marker
       insights/route.ts             GET — deterministic supplement↔recovery correlations + Claude narration (Gemini fallback), cached per date
       bioage/route.ts               GET — biological-age history recorded by the AI summary
       ai/
@@ -238,7 +249,8 @@ src/
         barcode/route.ts            GET  — barcode → nutrition (Open Food Facts)
         summary/route.ts            POST — AI health summary (Claude primary, Gemini fallback); upserts bio-age history
         supplements/route.ts        POST — supplement actions: identify-text, identify-image, recommend, generate-tips
-        chat/route.ts               POST — chat with your health data (Claude tool use over cache readers; Claude-only)
+        chat/route.ts               POST — chat with your health data (Claude tool use over cache readers incl. get_lab_results; Claude-only)
+        labs/route.ts               POST — lab report photo/PDF → Gemini transcription into known markers
     globals.css
     layout.tsx
     page.tsx                        3-tab SPA: Overview / Nutrition / Supplements; date nav, goals, streak, TabBar
@@ -264,6 +276,8 @@ src/
     BloodPressureChart.tsx          Systolic/diastolic line chart with ACC/AHA category badge (cache-only trend route, 7D/14D/1M)
     TrendRangeToggle.tsx            Shared 7D / 14D / 1M segmented control for the trend charts
     CorrelationInsights.tsx         Supplement↔recovery correlation card — AI narrative + per-metric delta chips
+    LabResults.tsx                  Blood work card — manual entry + photo/PDF AI transcription, flagged markers first, panel history
+    supplements/MissingLabelsCard.tsx  Nudge for products with no recorded label — per-product or bulk grounded lookup, saved only on user accept
     HealthChat.tsx                  Chat panel over the user's own health data (Claude tool use)
     GarminConnectModal.tsx          Email/password login form + session status
     GarminDashboard.tsx             All Garmin metrics + workout cards (single file)
@@ -282,8 +296,11 @@ src/
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
     heartbeat.ts                    heartbeatJson() — streams whitespace every 5s so long AI routes survive Azure SWA's ~45s gateway kill
     ingredientLookup.ts             lookupIngredients() — Claude + web_search server tool reads a branded product's label panel off a cited page; no source ⇒ no ingredients
-    ingredientLedger.ts             Parses recorded label panels into per-nutrient daily totals (formatIngredientLedger + TOP_UP_RULES) so the AI doses on top of what the stack already supplies
+    ingredientLedger.ts             Parses recorded label panels into per-nutrient daily totals (formatIngredientLedger + TOP_UP_RULES) so the AI doses on top of what the stack already supplies; needsLabel() drives the missing-label nudge
     timeOfDay.ts                    TimeOfDay slots — single source of truth for type, order, labels/icons/colors, validation and AI prompt wording (client-safe, no storage imports)
+    schedule.ts                     Dosing schedules (daily / weekdays / every-N-days / on-off cycle) — isScheduledOn, countScheduledDays, describeSchedule (client-safe)
+    labs-catalog.ts                 Biomarker catalog, unit conversion, range interpretation, formatLabsForPrompt (client-safe)
+    labs.ts                         Lab panel persistence (data/labs.json); re-exports labs-catalog for server callers
 data/
   log.json                          Persisted food log (git-ignored)
   profile.json                      User profile (git-ignored)
@@ -316,6 +333,7 @@ data/
     YYYY-MM-DD.json                 Cached correlation insights per date — invalidated when the correlation table's hash changes
   bioage-history.json               One bio-age estimate per analyzed date — upserted by the AI summary, read by the trend chart
   weight.json                       Body weight log (git-ignored)
+  labs.json                         Blood work panels — value + unit exactly as reported (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
 .env.local.example                    All env var documentation
@@ -363,6 +381,11 @@ docs/
   dose: number;
   unit: "mg" | "mcg" | "IU" | "g";
   timeOfDay: "morning" | "afternoon" | "evening" | "bedtime" | "any";
+  schedule?:                              // absent = every day
+    | { type: "daily" }
+    | { type: "days"; days: number[] }    // 0=Sun … 6=Sat
+    | { type: "interval"; everyDays: number; anchor: string }
+    | { type: "cycle"; onDays: number; offDays: number; anchor: string };
   ingredients?: string;                   // label ingredients — ONLY trusted source for blend overlap analysis (user-entered or transcribed from a label photo; never recalled by the AI)
   logged: boolean;                        // checked off today?
   date: string;                           // "YYYY-MM-DD"
@@ -478,6 +501,22 @@ docs/
 }
 ```
 
+### Lab panel (data/labs.json)
+```ts
+{
+  id: string;
+  date: string;         // "YYYY-MM-DD" — the date blood was DRAWN, not entered
+  source?: string;      // lab / clinic name
+  note?: string;
+  markers: Array<{
+    key: string;        // a BIOMARKERS key, e.g. "vitaminD" | "ldl" | "hsCRP"
+    value: number;      // exactly as the report printed it
+    unit: string;       // exactly as printed — mg/dL vs mmol/L is not interchangeable
+  }>;
+  createdAt: string;
+}
+```
+
 ## Daily goals (user-configurable)
 
 Default values — can be changed via ⚙️ in header, saved to localStorage:
@@ -547,7 +586,7 @@ Activity multipliers:
 ## Next steps
 
 - [ ] **Adaptive TDEE (MacroFactor-style)** — deterministic engine comparing logged intake vs weight trend over rolling 2–3 weeks to compute true TDEE and auto-adjust the calorie goal weekly toward the health goal
-- [ ] **Lab results with AI extraction (InsideTracker-style)** — photo/PDF of a lab report → Gemini extracts biomarkers → per-date storage + trend charts + fed into the bio-age prompt (its biggest blind spot)
+- [x] **Lab results with AI extraction (InsideTracker-style)** — photo/PDF of a lab report → Gemini extracts biomarkers → per-panel storage + flagged-marker card + fed into the bio-age, supplement and chat prompts (see the Blood Work section); per-marker trend charts still to come
 - [ ] **Editable coach memory (Whoop "My Memory"-style)** — user-editable coach notes (injuries, dietary restrictions, schedule constraints) injected into every AI prompt
 - [x] **Daily behavior journal + correlations (Whoop Journal-style)** — one-tap behavior tags (alcohol, late caffeine, sauna, …) in `lib/journal.ts` → `data/journal.json`; `/api/journal`; JournalCard on Overview; the correlation engine generalized from supplements to factors (`CorrelationFactor`, supplements + behaviors) so the Correlations card shows next-day recovery deltas for behaviors too
 - [x] **Micronutrient tracking with supplement cross-referencing (beyond Cronometer)** — Gemini food schema extended with 12 per-food micros (`FoodMicros`); `lib/micros.ts` catalog with adult-male targets/upper limits + supplement-name keyword matching with unit conversion (incl. IU→mcg for vitamin D); MicrosPanel on Nutrition tab stacks food + taken-supplement contributions per nutrient vs daily target
@@ -568,7 +607,7 @@ Activity multipliers:
 - [x] **Chat with your health data** — `POST /api/ai/chat`: Claude tool-use (get_day_data / get_range_summary / get_profile) over the existing cache readers; chat panel on Overview (requires `ANTHROPIC_API_KEY`)
 - [ ] Weekly email/PDF report — render the already-computed week-vs-prior-week deltas into a shareable weekly digest
 - [ ] Supplement inventory — pills-remaining countdown from daily check-offs ("Vitamin D runs out in 9 days") with a reorder nudge
-- [ ] Lab results entry — manual blood-work input (lipids, glucose, vitamin D) fed into the AI summary; currently the biggest blind spot in the bio-age estimate
+- [ ] Lab marker trend charts — per-marker history over panels, with the optimal band shaded (the data model already stores every panel)
 - [ ] PWA — manifest + service worker for phone install; supplement reminders via scheduled notifications grouped by morning/afternoon/evening (times already in the data)
 - [ ] Voice meal logging — Web Speech API → existing `/api/ai/text` route
 - [x] **Garmin Connect integration** — session auth + MFA + full data import
@@ -617,6 +656,9 @@ Activity multipliers:
 - [x] **Grounded ingredient lookup from trusted sources** — `lib/ingredientLookup.ts` calls Claude (`claude-opus-5`, `ANTHROPIC_INGREDIENTS_MODEL`) with the `web_search_20260209` server tool to read a branded product's Supplement Facts panel off the manufacturer's or a major retailer's page, returning the list plus the source URL (and every page it opened). A result with no cited source is rejected **in code**, not just discouraged in the prompt — so an unverifiable product stays "NOT RECORDED" instead of getting a plausible guess. Wired into `identify-text` (runs before Gemini; verified data is injected into the prompt and overwrites the generated `ingredients`) and a new `lookup-ingredients` action behind a 🔎 Look up button in the inline edit form, which fills the textarea and shows the source link for the user to check before saving. Handles the server-tool `pause_turn` resume loop; degrades to null without `ANTHROPIC_API_KEY`
 - [x] **AI Stack Review — adjust and stop, not just add** — the `recommend` action now returns `adjustments` (dose/timing changes on existing entries) and `removals` (redundant / unused / over-limit entries) alongside `recommendations`, each keyed to a real stack id that the route validates against the live stack. Amber "Adjust" and coral "Consider stopping" cards in `SupplementLog` apply with one tap (the suggested TOTAL daily dose is divided back across the entry's pills-per-day before saving). No-op adjustments — where the model relabels low adherence as an "increase" with an unchanged dose and timing — are filtered server-side against the real entry, which also supplies the true current total
 - [x] **Supplement ingredient grounding (hallucination fix)** — the AI was asserting invented contents for branded blends (claimed NOVOS Core contains NMN + CoQ10; it contains neither — NMN is the separate NOVOS Boost), and the fabricated list was being written into the entry's `description` at add time, then read back by the summary as fact. Added `Supplement.ingredients` (user-editable textarea in the inline edit form; Gemini fills it ONLY by transcribing a label photo), tagged every AI-visible stack line `LABEL INGREDIENTS (verified)` / `NOT RECORDED`, and replaced the "treat combo products as containing their typical ingredients" rule in both prompt sets with a grounding rule that forbids naming ingredients for unrecorded entries. `identify-text` product lookup no longer recites a formulation from memory; summary `promptVersion` → 3 to invalidate v2 caches. Also fixed `updateSupplement()` blind `Object.assign`, which wiped every field the caller omitted (editing a dose erased AI tips)
+- [x] **Blood work (2026-08-14)** — the outcome layer the app was missing: 31-marker catalog with reference AND optimal ranges plus per-marker alternate units (`lib/labs-catalog.ts`, split from `labs.ts` so the client can import the catalog without dragging the Azure/fs storage layer into the browser bundle), `GET/POST/DELETE /api/labs`, and `POST /api/ai/labs` transcribing a photo or PDF of a report via Gemini. Values are stored exactly as printed (value + unit) — mg/dL and mmol/L are not interchangeable and normalising on input would destroy the original reading. Extraction fills the manual form rather than saving, so every number is seen before it lands. `formatLabsForPrompt()` hands the AI pre-computed status ("LOW — below reference range" / "in reference range but outside optimal") with draw dates and the previous reading, and the prompts now rank a measured level above any wearable proxy for the same thing — vitamin D dosing comes from the 25-OH value, not from a population default. Wired into the summary (bio-age), both supplement AI actions, and a new `get_lab_results` chat tool; summary `promptVersion` → 5
+- [x] **Supplement dosing schedules (2026-08-14)** — every supplement was assumed daily, so a deliberate 3×/week item showed 43% adherence and the Stack Review proposed removing it for "not actually being taken". `lib/schedule.ts` adds daily / weekdays / every-N-days / N-on-N-off (DST-safe day arithmetic, normalization that can never produce a schedule which hides an entry forever), `getAdherenceStats()` replaces `getAdherenceForRange()` with taken-vs-**scheduled** counts that also exclude days before the supplement existed, the checklist splits due-today from a muted "Not scheduled today" group, and all three prompt sets state the schedule and the honest denominator. Fixed along the way: the update route ran `sanitizeTime(undefined) → "any"` on every patch, so generating AI tips silently reset every supplement's time of day
+- [x] **Missing-label nudge (2026-08-14)** — ledger accuracy is gated on recorded ingredients, the field users skip. `MissingLabelsCard` names the products the ledger can't account for (`needsLabel()`, the exact inverse of what the ledger can use) with the consequence attached, and runs the grounded web lookup per product or for all of them sequentially. Results are never auto-saved: each shows its ingredient list and source URL and waits to be accepted — a web lookup is evidence, not proof
 - [x] **Ingredient ledger, top-up dosing, and a "Before bedtime" slot (2026-08-14)** — the AI recommended a full clinical dose of nutrients a blend already supplied (3 g glycine while NOVOS Core already gives 1 g), because summing free-text label panels across products is exactly the arithmetic models fail at. `lib/ingredientLedger.ts` now does it in code — parse (thousands separators, unit conversion, IU, `× pills/day`), canonicalise via a ~50-entry synonym table, sum per nutrient — and the resulting ledger is injected into all four `/api/ai/supplements` actions and the summary prompt, alongside `TOP_UP_RULES` requiring the suggested dose to be the remaining top-up with the arithmetic spelled out. Unparseable rows are flagged LOWER BOUND; unrecorded products contribute nothing and are named as unknown. `alreadyInStack` on each suggestion renders as a top-up badge and is persisted into the entry's usage tip. Separately, `TimeOfDay` gained `"bedtime"` ("Before bedtime", 🛏️) and all slot metadata moved into `lib/timeOfDay.ts` — one source of truth for the type, order, labels, colors, validation and prompt wording, replacing three drifting copies (checklist, planner, API validator). Adjustments carrying an invented slot ("night") are now treated as no timing change instead of being silently flattened to "any" on save; summary `promptVersion` → 4
 - [x] **Weekly planner add flow — manual / AI / photo / barcode** — the planner could only add a blank row, so anything not already in history had to be typed by hand. `SupplementAddPanel` gained a draft mode (`onDraft`): all four tabs funnel through one `commit()` that either writes to the library (daily log, unchanged) or hands the collected entry back. The planner uses draft mode deliberately — a supplement written straight to the stack mid-plan would be deactivated again by the very next "Apply plan" reconcile
 - [x] **Supplement AI route heartbeat-streamed** — `generate-tips` on a full stack takes ~50s and was dying at Azure SWA's ~45s gateway kill ("Backend call failure", HTTP 500); `lib/heartbeat.ts` (`heartbeatJson()`, extracted from the summary route's pattern) now wraps all four `/api/ai/supplements` actions — status is always 200 and errors arrive in-body as `{error}`, so all four client call sites check `data.error` as well as `resp.ok`

@@ -3,6 +3,9 @@
 import type { SupplementUnit } from "@/lib/supplements";
 import type { TimeOfDay } from "@/lib/timeOfDay";
 import {
+  type SupplementSchedule, DAILY, WEEKDAY_LABELS, todayIsoLocal, shortSchedule,
+} from "@/lib/schedule";
+import {
   TIME_OF_DAY_ORDER, TIME_OF_DAY_LABELS, TIME_OF_DAY_ICONS, TIME_OF_DAY_COLORS,
 } from "@/lib/timeOfDay";
 
@@ -41,9 +44,115 @@ export interface DraftSupplement {
   unit: SupplementUnit;
   pills?: number;
   timeOfDay: TimeOfDay;
+  schedule?: SupplementSchedule;
   description?: string;
   usageTip?: string;
   ingredients?: string;
+}
+
+// ── schedule editor ───────────────────────────────────────────────────────────
+
+const SCHEDULE_KINDS: Array<[SupplementSchedule["type"], string]> = [
+  ["daily", "Every day"],
+  ["days", "Certain weekdays"],
+  ["interval", "Every N days"],
+  ["cycle", "Cycle on / off"],
+];
+
+const schedInput: React.CSSProperties = {
+  background: "var(--bg-surface)", border: "1px solid var(--border-mid)",
+  color: "var(--text)", borderRadius: 8, padding: "4px 6px", fontSize: 12, width: 52,
+};
+
+/**
+ * Picks a dosing schedule. Kept deliberately small — the default (every day) needs no
+ * interaction at all, and the three alternatives cover what real protocols ask for:
+ * fixed weekdays, every-N-days, and on/off cycling.
+ */
+export function ScheduleEditor({ value, onChange }: {
+  value: SupplementSchedule | undefined;
+  onChange: (s: SupplementSchedule) => void;
+}) {
+  const sched = value ?? DAILY;
+
+  function setKind(kind: SupplementSchedule["type"]) {
+    const anchor = todayIsoLocal();
+    if (kind === "daily") onChange(DAILY);
+    else if (kind === "days") onChange({ type: "days", days: [1, 3, 5] });
+    else if (kind === "interval") onChange({ type: "interval", everyDays: 2, anchor });
+    else onChange({ type: "cycle", onDays: 5, offDays: 2, anchor });
+  }
+
+  function toggleDay(d: number) {
+    if (sched.type !== "days") return;
+    const days = sched.days.includes(d) ? sched.days.filter((x) => x !== d) : [...sched.days, d].sort();
+    // Never let the list empty out — that would hide the supplement on every day
+    onChange(days.length ? { type: "days", days } : DAILY);
+  }
+
+  return (
+    <div className="space-y-2">
+      <select
+        value={sched.type}
+        onChange={(e) => setKind(e.target.value as SupplementSchedule["type"])}
+        className="w-full rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}>
+        {SCHEDULE_KINDS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+      </select>
+
+      {sched.type === "days" && (
+        <div className="flex gap-1">
+          {WEEKDAY_LABELS.map((label, d) => {
+            const on = sched.days.includes(d);
+            return (
+              <button key={d} onClick={() => toggleDay(d)} type="button"
+                className="flex-1 py-1 rounded-md text-[10px] font-semibold transition-colors"
+                style={{
+                  background: on ? "rgba(167,139,250,0.18)" : "var(--bg-surface)",
+                  color: on ? "#a78bfa" : "var(--text-dim)",
+                  border: `1px solid ${on ? "rgba(167,139,250,0.35)" : "var(--border-mid)"}`,
+                }}
+                aria-pressed={on} aria-label={label}>
+                {label[0]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {sched.type === "interval" && (
+        <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
+          <span>Every</span>
+          <input type="number" min={2} max={60} value={sched.everyDays} style={schedInput}
+            onChange={(e) => onChange({ ...sched, everyDays: Math.max(2, Number(e.target.value) || 2) })} />
+          <span>days, starting {sched.anchor}</span>
+        </div>
+      )}
+
+      {sched.type === "cycle" && (
+        <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: "var(--text-muted)" }}>
+          <input type="number" min={1} value={sched.onDays} style={schedInput}
+            onChange={(e) => onChange({ ...sched, onDays: Math.max(1, Number(e.target.value) || 1) })} />
+          <span>days on /</span>
+          <input type="number" min={1} value={sched.offDays} style={schedInput}
+            onChange={(e) => onChange({ ...sched, offDays: Math.max(1, Number(e.target.value) || 1) })} />
+          <span>off, from {sched.anchor}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Small chip showing a non-daily schedule; renders nothing for plain daily. */
+export function ScheduleChip({ schedule }: { schedule: SupplementSchedule | undefined }) {
+  const text = shortSchedule(schedule);
+  if (!text) return null;
+  return (
+    <span className="px-1.5 py-0.5 rounded"
+      style={{ fontSize: "0.6rem", background: "rgba(167,139,250,0.12)", color: "#a78bfa", fontFamily: "var(--font-mono)" }}>
+      {text}
+    </span>
+  );
 }
 
 // The tip to store when a suggestion is added. The top-up note travels with it —

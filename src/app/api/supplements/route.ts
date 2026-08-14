@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceForRange, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceStats, type PlanItem } from "@/lib/supplements";
 import { isTimeOfDay, sanitizeTimeOfDay } from "@/lib/timeOfDay";
+import { normalizeSchedule } from "@/lib/schedule";
 import { shiftDate, dateRange } from "@/lib/summary/snapshots";
 
 const sanitizeTime = sanitizeTimeOfDay;
@@ -26,10 +27,11 @@ export async function GET(req: Request) {
     // AI summary prompt, just surfaced here too so the user can see them inline.
     const weekDates = dateRange(shiftDate(date, -6), date);
     const monthDates = dateRange(shiftDate(date, -29), date);
-    const suppIds = supplements.map((s) => s.id);
+    // Denominators come from each supplement's own schedule (and creation date), so a
+    // 3×/week item reads as 3/3 rather than 3/7.
     const [week, month] = await Promise.all([
-      suppIds.length ? getAdherenceForRange(suppIds, weekDates) : Promise.resolve({}),
-      suppIds.length ? getAdherenceForRange(suppIds, monthDates) : Promise.resolve({}),
+      supplements.length ? getAdherenceStats(supplements, weekDates) : Promise.resolve({}),
+      supplements.length ? getAdherenceStats(supplements, monthDates) : Promise.resolve({}),
     ]);
     return NextResponse.json({
       supplements, log,
@@ -46,7 +48,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   if (body.action === "update") {
-    await updateSupplement(body.id, { description: body.description, usageTip: body.usageTip, ingredients: body.ingredients, name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit, pills: body.pills ? Number(body.pills) : undefined, timeOfDay: sanitizeTime(body.timeOfDay) });
+    await updateSupplement(body.id, {
+      description: body.description, usageTip: body.usageTip, ingredients: body.ingredients,
+      name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit,
+      pills: body.pills ? Number(body.pills) : undefined,
+      timeOfDay: body.timeOfDay === undefined ? undefined : sanitizeTime(body.timeOfDay),
+      // undefined = "not part of this patch" (the tips action patches text only);
+      // an explicit schedule is normalized so a malformed body can't hide an entry.
+      schedule: body.schedule === undefined ? undefined : normalizeSchedule(body.schedule),
+    });
     return NextResponse.json({ ok: true });
   }
   if (body.action === "plan") {
@@ -62,6 +72,7 @@ export async function POST(req: Request) {
         unit: it.unit,
         pills: it.pills ? Number(it.pills) : undefined,
         timeOfDay: sanitizeTime(it.timeOfDay),
+        schedule: normalizeSchedule(it.schedule),
         description: it.description || undefined,
         usageTip: it.usageTip || undefined,
         ingredients: it.ingredients || undefined,
@@ -79,6 +90,7 @@ export async function POST(req: Request) {
     unit: body.unit,
     pills: body.pills ? Number(body.pills) : undefined,
     timeOfDay: sanitizeTime(body.timeOfDay),
+    schedule: normalizeSchedule(body.schedule),
     description: body.description,
     usageTip: body.usageTip,
     ingredients: body.ingredients,

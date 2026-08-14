@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
-import { getAllSupplements, getAdherenceForRange, type Supplement } from "@/lib/supplements";
+import { getAllSupplements, getAdherenceStats, type Supplement, type AdherenceStat } from "@/lib/supplements";
+import { describeSchedule } from "@/lib/schedule";
 import { getAllEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
@@ -8,6 +9,7 @@ import { heartbeatJson } from "@/lib/heartbeat";
 import { lookupIngredients } from "@/lib/ingredientLookup";
 import { formatIngredientLedger, TOP_UP_RULES } from "@/lib/ingredientLedger";
 import { TIME_OF_DAY_ENUM, TIME_OF_DAY_PROMPT_NOTE, isTimeOfDay } from "@/lib/timeOfDay";
+import { getLabPanels, formatLabsForPrompt } from "@/lib/labs";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
@@ -51,7 +53,16 @@ function stackLine(s: Supplement): string {
   const ing = s.ingredients?.trim()
     ? ` | LABEL INGREDIENTS (verified): ${s.ingredients.trim()}`
     : ` | LABEL INGREDIENTS: NOT RECORDED`;
-  return `- ${label}: ${doseStr} | timing: ${s.timeOfDay}${ing}${s.description ? ` | ${s.description}` : ""}`;
+  // Non-daily schedules are stated so "3 doses this week" isn't read as poor adherence
+  const sched = s.schedule && s.schedule.type !== "daily" ? ` | schedule: ${describeSchedule(s.schedule)}` : "";
+  return `- ${label}: ${doseStr} | timing: ${s.timeOfDay}${sched}${ing}${s.description ? ` | ${s.description}` : ""}`;
+}
+
+/** "taken 5/7 scheduled days" — the denominator is the schedule, not the calendar. */
+function adherenceStr(a: AdherenceStat | undefined): string {
+  if (!a) return "no data";
+  if (a.scheduled === 0) return `${a.taken} taken (no doses were due)`;
+  return `${a.taken}/${a.scheduled} scheduled days`;
 }
 
 const DOSAGE_OVERLAP_RULES = `- DOSAGE: evaluate every dose as the TOTAL daily amount (dose × pills). Judge it against the effective range and the tolerable upper intake level for THIS user's age, sex, and weight — explicitly flag anything under-dosed or over-dosed
@@ -200,11 +211,12 @@ Rules:
 
     // ── personalized recommendations ─────────────────────────────────────────
     if (body.action === "recommend") {
-      const [profile, allSupps, allEntries, weightRows, daily, sleep, hrv, userMetrics, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
+      const [profile, allSupps, allEntries, weightRows, labPanels, daily, sleep, hrv, userMetrics, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
         getAllEntries(),
         getRecentWeightEntries(35),
+        getLabPanels(),
         readGarminCache("daily"),
         readGarminCache("sleep"),
         readGarminCache("hrv"),
@@ -218,8 +230,8 @@ Rules:
       // 7-day adherence per supplement — inconsistent intake is itself a signal
       const last7 = Array.from({ length: 7 }, (_, i) => isoLocalDate(-i));
       const adherence = allSupps.length
-        ? await getAdherenceForRange(allSupps.map((s) => s.id), last7)
-        : ({} as Record<string, number>);
+        ? await getAdherenceStats(allSupps, last7)
+        : ({} as Record<string, AdherenceStat>);
 
       const bmr  = profile ? calculateBMR(profile) : null;
       const tdee = profile ? calculateTDEE(profile) : null;
@@ -247,7 +259,7 @@ Rules:
         ? `${(weightRows[weightRows.length - 1].weightKg - weightRows[0].weightKg).toFixed(1)} kg over ${weightRows.length} entries`
         : null;
       // ids are exposed so the model can target adjustments/removals at a specific entry
-      const existing = allSupps.map((s) => `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`);
+      const existing = allSupps.map((s) => `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherenceStr(adherence[s.id])}`);
 
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -293,6 +305,11 @@ HRV status: ${na(sleep.hrvStatus)}`
           : "No blood pressure data",
         weightTrend ? `Weight trend: ${weightTrend}` : "",
         "",
+        "",
+        // Measured levels beat population defaults — a 21 ng/mL vitamin D and a
+        // 58 ng/mL vitamin D call for opposite advice.
+        formatLabsForPrompt(labPanels, isoLocalDate()) || "### Blood work\nNo lab results recorded",
+        "",
         "## Current Supplement Stack (total daily doses + 7-day adherence)",
         existing.length ? existing.join("\n") : "None",
         // Deterministic per-nutrient totals across the whole stack. Without this the
@@ -333,12 +350,14 @@ Return JSON:
 Rules for ADD (recommendations), 2–5 items:
 - Do NOT suggest anything already in the "Current Supplement Stack" — including the same nutrient hidden inside a combo product whose ingredients are recorded; check ingredient-level overlap, not just product names
 - Every "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
+- BLOOD WORK OUTRANKS EVERYTHING for any nutrient it measures. If a lab value exists (vitamin D, ferritin, B12, folate, magnesium RBC, homocysteine, hs-CRP, HbA1c, lipids), dose from the measured level and quote it in "reason" — a level already in the optimal range is a reason NOT to recommend that nutrient, and a low one justifies a specific corrective dose. Never contradict a lab value with a guess, and note when a reading is old enough to be worth repeating
 - Suggested doses must be tailored to this user's age, sex, and body weight, and must stay safe when ADDED ON TOP of the current stack's cumulative totals
 ${TOP_UP_RULES}
 - Prioritise the most impactful gaps first; if a health goal is stated, weight recommendations toward it
 
 Rules for ADJUST (adjustments), 0–5 items — check EVERY entry for these:
 - Total daily dose below the effective range for this user's age/sex/weight → increase. Judge "below" against the INGREDIENT LEDGER total for that nutrient, not the single entry: if another product tops it up to an effective total, leave it alone
+- A measured blood level that is low despite supplementation → increase (cite the value); a measured level already at the top of the optimal range → decrease. Lab values take priority over generic dosing tables
 - Total daily dose approaching or above the tolerable upper limit, alone or once summed with the same nutrient in other products (use the ledger totals) → decrease
 - Timing that undercuts absorption (competing minerals taken together, fat-soluble vitamins away from the fattiest meal, stimulating supplements in the evening) → timing
 - A sleep-active supplement (melatonin, glycine, magnesium, L-theanine, apigenin) sitting in "morning"/"afternoon"/"any", or an activating one (caffeine, B-complex, tyrosine) sitting in "evening"/"bedtime" → timing. Use "bedtime" (not "evening") when it should be taken 0–30 min before lights out
@@ -346,7 +365,7 @@ Rules for ADJUST (adjustments), 0–5 items — check EVERY entry for these:
 
 Rules for STOP (removals), 0–4 items — a supplement earns removal when:
 - Its nutrient is already fully covered by another product in the stack (state which one)
-- 7-day adherence is 0–1/7, showing it is not actually being taken
+- Adherence is 0–1 of its SCHEDULED days, showing it is not actually being taken. Judge only against scheduled days — a supplement on a Mon/Wed/Fri or cycled schedule taken 3/3 is fully adherent, not neglected
 - The data no longer supports it (the deficit or symptom it targets is not present in these metrics)
 - Its cumulative total with other products exceeds the safe upper limit and cutting the weaker product is the cleanest fix
 - Be conservative: if a supplement is reasonable but not clearly redundant, unused, or unsafe, leave it alone rather than padding this list
@@ -401,10 +420,11 @@ ${DOSAGE_OVERLAP_RULES}
 
     // ── generate how/when tips for existing stack ────────────────────────────
     if (body.action === "generate-tips") {
-      const [profile, allSupps, allEntries, daily, sleep, hrv, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
+      const [profile, allSupps, allEntries, labPanels, daily, sleep, hrv, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
         getAllEntries(),
+        getLabPanels(),
         readGarminCache("daily"),
         readGarminCache("sleep"),
         readGarminCache("hrv"),
@@ -417,11 +437,11 @@ ${DOSAGE_OVERLAP_RULES}
       if (!allSupps.length) return { tips: [] };
 
       const last7 = Array.from({ length: 7 }, (_, i) => isoLocalDate(-i));
-      const adherence = await getAdherenceForRange(allSupps.map((s) => s.id), last7);
+      const adherence = await getAdherenceStats(allSupps, last7);
 
       const na = (v: unknown, u = "") => (v != null ? `${v}${u}` : "no data");
       const stackLines = allSupps.map((s) =>
-        `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherence[s.id] ?? 0}/7`
+        `- id:${s.id} | ${stackLine(s).slice(2)} | 7-day adherence: ${adherenceStr(adherence[s.id])}`
       ).join("\n");
 
       // 7-day fat/protein averages — relevant for absorption timing of fat-soluble vitamins
@@ -462,6 +482,8 @@ ${formatIngredientLedger(allSupps)}
 ## Health context
 ${contextLines || "No health data available"}
 
+${formatLabsForPrompt(labPanels, isoLocalDate())}
+
 Return JSON with EXACTLY this shape:
 {
   "tips": [
@@ -480,6 +502,7 @@ ${DOSAGE_OVERLAP_RULES}
 - If the same nutrient appears in more than one product in the stack, each affected usageTip must state the combined daily total from the ledger and whether to adjust or space the doses
 - Where timing matters most at a precise moment, say which slot: "evening" (with/after dinner) vs "before bedtime" (0–30 min before lights out)
 - usageTip must be specific and actionable, referencing their goal or a data signal when relevant (e.g. "Take in the evening — your HRV of 38ms suggests your nervous system benefits from nighttime magnesium")
+- Where a Blood work value measures what a supplement targets, cite it in that supplement's tip and say whether the current dose is working (e.g. "your 25-OH vitamin D is 34 ng/mL after 6 months at 2000 IU — that's in range but below the 40–60 target, so this dose is holding rather than building")
 - Use dietary fat intake when advising on fat-soluble vitamins (D, K2, E, A, omega-3): pair them with the fattiest meal
 - description must be concise and relevant to this specific user, not generic
 - Return only valid JSON, no markdown`;

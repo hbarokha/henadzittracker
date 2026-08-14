@@ -1,5 +1,6 @@
 import { readJson, mutateJson } from "@/lib/storage";
 import type { TimeOfDay } from "@/lib/timeOfDay";
+import { isScheduledOn, countScheduledDays, type SupplementSchedule } from "@/lib/schedule";
 
 export type SupplementUnit = "mg" | "mcg" | "IU" | "g";
 // Slots live in lib/timeOfDay so client components can import the labels/order without
@@ -27,6 +28,12 @@ export interface Supplement {
    * Free text (comma-separated, doses optional): "Ca-AKG 2g, fisetin 150mg, …".
    */
   ingredients?: string;
+  /**
+   * When this supplement is actually due. Absent = every day, which is what every
+   * record predating schedules means. Adherence is measured against the days this
+   * calls for, so a deliberate 3×/week item no longer reads as 43% compliance.
+   */
+  schedule?: SupplementSchedule;
   createdAt: string;
 }
 
@@ -67,7 +74,7 @@ export async function addSupplement(s: Omit<Supplement, "id" | "createdAt" | "ac
 
 export async function updateSupplement(
   id: string,
-  patch: Partial<Pick<Supplement, "description" | "usageTip" | "ingredients" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay">>
+  patch: Partial<Pick<Supplement, "description" | "usageTip" | "ingredients" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay" | "schedule">>
 ): Promise<void> {
   await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
     const s = data.supplements.find((x) => x.id === id);
@@ -162,15 +169,43 @@ export async function getDailyView(date: string): Promise<{ supplements: Supplem
   return { supplements, log };
 }
 
-export async function getAdherenceForRange(
-  supplementIds: string[],
+/** Doses taken vs doses the schedule actually called for, over a window. */
+export interface AdherenceStat {
+  taken: number;
+  /** Days in the window the supplement was due AND already existed. Never 0 when it existed. */
+  scheduled: number;
+}
+
+/**
+ * Adherence per supplement, measured against SCHEDULED days rather than calendar days.
+ * Two corrections are baked in, both of which used to make a fine stack look neglected:
+ * days before the supplement was added don't count, and days its schedule skips don't
+ * count. `taken` can exceed `scheduled` if a dose was logged off-schedule — that's real
+ * data, so it is reported as-is rather than clamped.
+ */
+export async function getAdherenceStats(
+  supplements: Array<Pick<Supplement, "id" | "createdAt" | "schedule">>,
   dates: string[]
-): Promise<Record<string, number>> {
+): Promise<Record<string, AdherenceStat>> {
   const data = await loadData();
   const dateSet = new Set(dates);
-  const result: Record<string, number> = {};
-  for (const id of supplementIds) {
-    result[id] = data.log.filter((l) => l.supplementId === id && dateSet.has(l.date) && l.taken).length;
+  const takenByDate = new Map<string, Set<string>>();
+  for (const l of data.log) {
+    if (!l.taken || !dateSet.has(l.date)) continue;
+    let set = takenByDate.get(l.supplementId);
+    if (!set) takenByDate.set(l.supplementId, (set = new Set()));
+    set.add(l.date);
+  }
+
+  const result: Record<string, AdherenceStat> = {};
+  for (const s of supplements) {
+    const created = (s.createdAt ?? "").slice(0, 10);
+    let scheduled = 0;
+    for (const d of dates) {
+      if (created && d < created) continue;
+      if (isScheduledOn(s.schedule, d)) scheduled++;
+    }
+    result[s.id] = { taken: takenByDate.get(s.id)?.size ?? 0, scheduled };
   }
   return result;
 }
@@ -219,8 +254,11 @@ export interface PlanCandidate {
   description?: string;
   usageTip?: string;
   ingredients?: string;
+  schedule?: SupplementSchedule;
   active: boolean;         // currently in the daily stack?
   recentTaken: number;     // times actually taken in the recent window
+  /** Days in the recent window this schedule actually called for — the honest denominator. */
+  recentScheduled: number;
   suggested: boolean;      // pre-select for next week?
   /**
    * Why this row is (or isn't) pre-checked, in one sentence. Computed from the
@@ -232,10 +270,15 @@ export interface PlanCandidate {
 }
 
 /** Plain-language account of the active/recentTaken combination behind `suggested`. */
-function planReason(active: boolean, recentTaken: number, days: number, lastUsed: string): string {
+function planReason(
+  active: boolean, recentTaken: number, recentScheduled: number, days: number, lastUsed: string,
+): string {
   const window = `the last ${days} days`;
-  const times = `${recentTaken}×`;
+  // A non-daily supplement is judged against the days it was actually due, so
+  // "3× in 14 days" reads as full adherence when it's a Mon/Wed/Fri item.
+  const times = recentScheduled < days ? `${recentTaken}× of ${recentScheduled} due` : `${recentTaken}×`;
   if (active && recentTaken > 0) return `In your stack and taken ${times} in ${window}.`;
+  if (active && recentScheduled === 0) return `In your stack; its schedule called for no doses in ${window}.`;
   if (active && recentTaken === 0) return `In your stack, but not checked off once in ${window} — keep it only if you actually intend to take it.`;
   if (!active && recentTaken > 0) return `Not in your current stack, yet taken ${times} in ${window} — looks like you're still on it.`;
   return `Not in your stack and not taken in ${window}. Last set up ${lastUsed.slice(0, 10)}.`;
@@ -269,6 +312,7 @@ export async function getSupplementHistory(recentDays = 14): Promise<PlanCandida
     const ids = new Set(entries.map((e) => e.id));
     const recentTaken = data.log.filter((l) => ids.has(l.supplementId) && recent.has(l.date) && l.taken).length;
     const active = entries.some((e) => e.active);
+    const recentScheduled = countScheduledDays(canonical.schedule, [...recent]);
     result.push({
       id: canonical.id,
       name: canonical.name,
@@ -280,10 +324,12 @@ export async function getSupplementHistory(recentDays = 14): Promise<PlanCandida
       description: canonical.description,
       usageTip: canonical.usageTip,
       ingredients: canonical.ingredients,
+      schedule: canonical.schedule,
       active,
       recentTaken,
+      recentScheduled,
       suggested: active || recentTaken > 0,
-      reason: planReason(active, recentTaken, recentDays, canonical.createdAt),
+      reason: planReason(active, recentTaken, recentScheduled, recentDays, canonical.createdAt),
       lastUsed: canonical.createdAt,
     });
   }
@@ -305,6 +351,8 @@ export interface PlanItem {
   unit: SupplementUnit;
   pills?: number;
   timeOfDay: TimeOfDay;
+  /** Applied to existing entries too — changing the schedule is a planning decision. */
+  schedule?: SupplementSchedule;
   // Carried only onto NEWLY created entries — an existing entry keeps its own
   // stored copy (see the update branch below).
   description?: string;
@@ -332,6 +380,7 @@ export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount:
         entry.unit = it.unit;
         entry.pills = it.pills;
         entry.timeOfDay = it.timeOfDay;
+        entry.schedule = it.schedule;
         // description / usageTip / ingredients intentionally left untouched
       } else {
         entry = {
@@ -342,6 +391,7 @@ export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount:
           unit: it.unit,
           pills: it.pills,
           timeOfDay: it.timeOfDay,
+          schedule: it.schedule,
           // A candidate re-added from history brings its notes and verified label
           // with it, so a replanned supplement isn't stripped back to a bare row.
           description: it.description,

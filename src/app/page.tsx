@@ -20,6 +20,7 @@ import SleepChart      from "@/components/SleepChart";
 import StressChart     from "@/components/StressChart";
 import BloodPressureChart from "@/components/BloodPressureChart";
 import CorrelationInsights from "@/components/CorrelationInsights";
+import LabResults       from "@/components/LabResults";
 import HealthChat      from "@/components/HealthChat";
 import JournalCard     from "@/components/JournalCard";
 import MicrosPanel     from "@/components/MicrosPanel";
@@ -632,6 +633,11 @@ export default function Home() {
                 <BioAgeChart />
                 <WeightChart todayIso={todayIso} />
               </div>
+            </CollapsibleSection>
+
+            {/* Blood work — reference data, entered rarely, read by every AI prompt */}
+            <CollapsibleSection id="labs" label="Blood Work" defaultOpen={false}>
+              <LabResults />
             </CollapsibleSection>
           </div>
         )}

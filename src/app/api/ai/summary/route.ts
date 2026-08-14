@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { getAllEntries } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
-import { getAllSupplements, getLogForDate, getAdherenceForRange } from "@/lib/supplements";
+import { getAllSupplements, getLogForDate, getAdherenceStats, type AdherenceStat } from "@/lib/supplements";
+import { describeSchedule, isScheduledOn } from "@/lib/schedule";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson, writeJson } from "@/lib/storage";
 import { recordBioAge } from "@/lib/bioage";
@@ -10,6 +11,7 @@ import { generateSummary } from "@/lib/summary/providers";
 import { SUMMARY_SYSTEM_PROMPT } from "@/lib/summary/prompt";
 import { readGarminCache, shiftDate, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
 import { formatIngredientLedger } from "@/lib/ingredientLedger";
+import { getLabPanels, formatLabsForPrompt } from "@/lib/labs";
 
 // ── summary cache ─────────────────────────────────────────────────────────────
 
@@ -97,13 +99,17 @@ export async function POST(req: Request) {
   const weekDates  = dateRange(week7Start, today);
   const monDates   = dateRange(mon30Start, today);
 
-  const [suppLog, allEntries, profile, supplements, weightRows] = await Promise.all([
+  const [suppLog, allEntries, profile, supplements, weightRows, labPanels] = await Promise.all([
     getLogForDate(today), // pure read — virtual backfill, never writes
     getAllEntries(),
     loadProfile(),
     getAllSupplements(),
     getRecentWeightEntries(35),
+    getLabPanels(),
   ]);
+  // Blood work is the only input that says what the body is MADE of — it anchors the
+  // bio-age estimate and lets supplement advice cite measured levels.
+  const labBlock = formatLabsForPrompt(labPanels, today);
 
   const monWeights = weightRows.filter((w) => monDates.includes(w.date));
   // Most recent manually-logged body composition (body fat / muscle / water / bone)
@@ -113,12 +119,14 @@ export async function POST(req: Request) {
   const bmr        = profile ? calculateBMR(profile) : null;
   const tdee       = profile ? calculateTDEE(profile) : null;
 
-  const suppIds = supplements.map((s) => s.id);
   const [weekAdherence, monAdherence] = await Promise.all([
-    suppIds.length ? getAdherenceForRange(suppIds, weekDates) : Promise.resolve({} as Record<string, number>),
-    suppIds.length ? getAdherenceForRange(suppIds, monDates)  : Promise.resolve({} as Record<string, number>),
+    supplements.length ? getAdherenceStats(supplements, weekDates) : Promise.resolve({} as Record<string, AdherenceStat>),
+    supplements.length ? getAdherenceStats(supplements, monDates)  : Promise.resolve({} as Record<string, AdherenceStat>),
   ]);
   const suppTaken = suppLog.filter((l) => l.taken).length;
+  // Only supplements actually due today belong in today's ratio — otherwise a
+  // cycled or 3×/week stack always looks half-missed.
+  const suppDueToday = supplements.filter((s) => isScheduledOn(s.schedule, today)).length;
 
   // One snapshot pass over the 30-day window — today, this week, the prior week
   // and the month halves are all slices of it (no duplicate cache reads)
@@ -143,9 +151,11 @@ export async function POST(req: Request) {
   // promptVersion invalidates caches when the output structure changes (v2: training section;
   // v3: supplement ingredient-grounding rule — v2 answers may assert invented blend contents;
   // v4: ingredient ledger + top-up dosing — v3 answers suggest full doses of nutrients a blend
-  // already supplies, and predate the "before bedtime" slot)
+  // already supplies, and predate the "before bedtime" slot;
+  // v5: blood work + schedule-aware adherence — v4 answers were blind to lab values and
+  // read non-daily supplements as missed doses)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { promptVersion: 4, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
+    { promptVersion: 5, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -304,12 +314,14 @@ ${workoutLines.length > 0 ? workoutLines.join("\n") : "  - No workouts logged"}
 
 ### Supplements
 ${supplements.length
-  ? `Today: ${suppTaken}/${supplements.length} taken
+  ? `Today: ${suppTaken}/${suppDueToday} due doses taken (${supplements.length} in the stack overall)
 Stack:
 ${supplements.map((s) => {
-    const todayTaken = suppLog.find((l) => l.supplementId === s.id)?.taken ? "✓" : "✗";
-    const w = weekAdherence[s.id] ?? 0;
-    const m = monAdherence[s.id] ?? 0;
+    const dueToday = isScheduledOn(s.schedule, today);
+    const todayTaken = suppLog.find((l) => l.supplementId === s.id)?.taken ? "✓" : dueToday ? "✗" : "— not due";
+    const w = weekAdherence[s.id];
+    const m = monAdherence[s.id];
+    const sched = s.schedule && s.schedule.type !== "daily" ? ` | schedule: ${describeSchedule(s.schedule)}` : "";
     const extra = [s.description, s.usageTip].filter(Boolean).join("; ");
     const label = [s.brand, s.name].filter(Boolean).join(" ");
     const pillsStr = s.pills && s.pills > 1 ? ` × ${s.pills} pills = ${s.dose * s.pills}${s.unit} total/day` : "/day";
@@ -318,11 +330,14 @@ ${supplements.map((s) => {
     const ing = s.ingredients?.trim()
       ? ` | LABEL INGREDIENTS (verified): ${s.ingredients.trim()}`
       : ` | LABEL INGREDIENTS: NOT RECORDED`;
-    return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${ing}${extra ? ` | notes: ${extra}` : ""}`;
+    // Adherence denominators are SCHEDULED days, not calendar days
+    return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay})${sched} — today: ${todayTaken} | 7-day: ${w?.taken ?? 0}/${w?.scheduled ?? weekDates.length} scheduled | 30-day: ${m?.taken ?? 0}/${m?.scheduled ?? monDates.length} scheduled${ing}${extra ? ` | notes: ${extra}` : ""}`;
   }).join("\n")}
 
 ${formatIngredientLedger(supplements)}`
   : "No supplements configured"}
+
+${labBlock || "### Blood work\nNo lab results recorded — say so when it limits the biological-age estimate or a nutrient recommendation, and suggest which markers would settle the question."}
 
 ---
 

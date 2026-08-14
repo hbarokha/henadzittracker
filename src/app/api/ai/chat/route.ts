@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getAllEntries } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getDailyView } from "@/lib/supplements";
+import { getLabPanels, latestMarkers, describeRange } from "@/lib/labs";
 import { readGarminCache, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
 
 // ── Chat with your health data ────────────────────────────────────────────────
@@ -61,6 +62,12 @@ const TOOLS: Anthropic.Tool[] = [
     description: "Get the user's profile: age, sex, height, weight, activity level, health goal, BMR and TDEE.",
     input_schema: { type: "object", properties: {} },
   },
+  {
+    name: "get_lab_results",
+    description:
+      "Get the user's blood work: every recorded lab panel plus the most recent value per marker, with unit conversion, reference/optimal ranges, whether each value is low/high/sub-optimal, and the previous reading. Call this for any question about cholesterol, vitamin D, ferritin, glucose, HbA1c, thyroid, testosterone, liver or kidney markers — and whenever a supplement dose should be justified by a measured level.",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,6 +76,24 @@ async function runTool(name: string, input: any): Promise<string> {
     const profile = await loadProfile();
     if (!profile) return JSON.stringify({ error: "No profile configured" });
     return JSON.stringify({ ...profile, bmr: calculateBMR(profile), tdee: calculateTDEE(profile) });
+  }
+
+  if (name === "get_lab_results") {
+    const panels = await getLabPanels();
+    if (!panels.length) return JSON.stringify({ panels: 0, note: "No lab results recorded" });
+    return JSON.stringify({
+      panels: panels.map((p) => ({ date: p.date, source: p.source, markerCount: p.markers.length })),
+      latest: latestMarkers(panels).map((m) => ({
+        marker: m.def.label,
+        value: m.value,
+        unit: m.unit,
+        canonical: m.canonical != null ? `${Number(m.canonical.toFixed(2))} ${m.def.unit}` : null,
+        status: m.status,
+        range: describeRange(m.def),
+        drawn: m.date,
+        previous: m.previous ? `${Number(m.previous.value.toFixed(2))} ${m.def.unit} on ${m.previous.date}` : null,
+      })),
+    });
   }
 
   if (name === "get_day_data") {
@@ -147,10 +172,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Conversation too long — start a new chat" }, { status: 400 });
 
   const system = `You are the in-app health assistant for HenadziTracker. Today is ${date ?? "unknown"} (the date currently selected in the app).
-You answer questions about the user's own logged data: Garmin metrics (sleep, HRV, stress, Body Battery, workouts, blood pressure, body composition), nutrition log, and supplements.
+You answer questions about the user's own logged data: Garmin metrics (sleep, HRV, stress, Body Battery, workouts, blood pressure, body composition), nutrition log, supplements, and blood work.
 
 - Use the tools to look up real data before answering — never guess numbers. If data is missing for a date, say so plainly.
 - Prefer get_range_summary for trend questions, then get_day_data to drill into specific days.
+- Call get_lab_results for anything a blood test measures. A measured level outranks any inference from wearable data, and any dosing advice for a nutrient with a lab value must cite that value and its draw date.
 - Cite the actual numbers you found. Keep answers short and conversational — a few sentences, simple "-" lists only when comparing days.
 - PLAIN TEXT ONLY — the chat panel renders raw text, so never use markdown (**bold**, headers, backticks).
 - You are not a doctor; for medical concerns recommend consulting a professional, but don't append that disclaimer to routine data questions.`;

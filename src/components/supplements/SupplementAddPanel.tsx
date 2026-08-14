@@ -6,8 +6,9 @@ import CameraModal from "../CameraModal";
 import {
   type AISuggestion, type DraftSupplement,
   TIME_ORDER, TIME_LABELS,
-  SuggestionCard, postSupplement, suggestionUsageTip,
+  SuggestionCard, postSupplement, suggestionUsageTip, ScheduleEditor,
 } from "./shared";
+import { type SupplementSchedule, DAILY } from "@/lib/schedule";
 
 declare class BarcodeDetector {
   constructor(options?: { formats: string[] });
@@ -47,6 +48,8 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
   const [manualForm, setManualForm] = useState({
     name: "", brand: "", dose: "", unit: "mg" as SupplementUnit, pills: "1", timeOfDay: "morning" as TimeOfDay,
   });
+  // Schedule is shared by the manual and barcode tabs (AI suggestions default to daily)
+  const [schedule, setSchedule] = useState<SupplementSchedule>(DAILY);
 
   // AI describe tab
   const [descPrompt, setDescPrompt] = useState("");
@@ -197,6 +200,7 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
       unit: bcConfirm.unit,
       pills: Number(bcConfirm.pills) || 1,
       timeOfDay: bcTimeOfDay,
+      schedule,
     });
     setSaving(false);
     bcReset();
@@ -212,6 +216,7 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
       unit: manualForm.unit,
       pills: Number(manualForm.pills) || 1,
       timeOfDay: manualForm.timeOfDay,
+      schedule,
     });
     setSaving(false);
   }
@@ -380,6 +385,10 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
                 {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
               </select>
             </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Repeat</p>
+            <ScheduleEditor value={schedule} onChange={setSchedule} />
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 py-2 rounded-lg text-sm transition-colors"
@@ -588,6 +597,10 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
                     {TIME_ORDER.map(t => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
                   </select>
                 </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[9px] uppercase tracking-wide px-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Repeat</p>
+                <ScheduleEditor value={schedule} onChange={setSchedule} />
               </div>
               <div className="flex gap-2">
                 <button onClick={bcReset}

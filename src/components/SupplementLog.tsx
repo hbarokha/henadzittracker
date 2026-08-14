@@ -7,14 +7,19 @@ import {
   type AISuggestion,
   TIME_ORDER, VALID_TOD, TIME_LABELS, TIME_ICONS, TIME_CSS_COLORS,
   InfoBadge, TipBadge, SuggestionCard, postSupplement, suggestionUsageTip,
+  ScheduleEditor, ScheduleChip,
 } from "./supplements/shared";
+import MissingLabelsCard from "./supplements/MissingLabelsCard";
+import { type SupplementSchedule, DAILY, isScheduledOn, describeSchedule } from "@/lib/schedule";
 import { IconPill } from "@/components/icons";
 
 interface SupplementWithLog extends Supplement {
   taken: boolean;
 }
 
-interface Adherence { week: Record<string, number>; weekDays: number; month: Record<string, number>; monthDays: number }
+/** Taken vs the days that supplement's own schedule called for (see lib/schedule.ts). */
+interface AdherenceStat { taken: number; scheduled: number }
+interface Adherence { week: Record<string, AdherenceStat>; weekDays: number; month: Record<string, AdherenceStat>; monthDays: number }
 
 /** A dose/timing change the AI proposes for an entry already in the stack. */
 interface Adjustment {
@@ -41,21 +46,14 @@ interface LookupResult {
 }
 
 // Green ≥85%, amber ≥50%, coral below — mirrors the BP/battery chart color language.
-function adherenceColor(taken: number, total: number): string {
-  if (total === 0) return "var(--text-dim)";
-  const pct = taken / total;
+// The denominator is scheduled days (computed server-side), so days before the
+// supplement existed and days its schedule skips never count against it.
+function adherenceColor(a: AdherenceStat | undefined): string {
+  if (!a || a.scheduled === 0) return "var(--text-dim)";
+  const pct = a.taken / a.scheduled;
   if (pct >= 0.85) return "var(--sage)";
   if (pct >= 0.5) return "var(--amber)";
   return "var(--coral)";
-}
-
-// How many of the window's days actually existed for this supplement — a supplement
-// added yesterday shouldn't read as red just because it wasn't around for the other 6.
-function eligibleDays(createdAt: string, viewDate: string, windowDays: number): number {
-  const created = new Date(createdAt.slice(0, 10));
-  const viewed = new Date(viewDate);
-  const daysSinceCreated = Math.round((viewed.getTime() - created.getTime()) / 86_400_000) + 1;
-  return Math.min(windowDays, Math.max(daysSinceCreated, 1));
 }
 
 interface Props { date: string }
@@ -93,7 +91,7 @@ export default function SupplementLog({ date }: Props) {
 
   // Edit
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay; ingredients: string }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning", ingredients: "" });
+  const [editForm, setEditForm] = useState<{ name: string; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay; ingredients: string; schedule: SupplementSchedule }>({ name: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning", ingredients: "", schedule: DAILY });
   const [editSaving, setEditSaving] = useState(false);
 
   // ── data loading ───────────────────────────────────────────────────────────
@@ -162,8 +160,10 @@ export default function SupplementLog({ date }: Props) {
       unit: s.unit,
       pills: s.pills,
       timeOfDay: retakeTime,
+      schedule: s.schedule,
       description: s.description,
       usageTip: s.usageTip,
+      ingredients: s.ingredients,
     });
     setSaving(false);
     setRetakeId(null);
@@ -172,7 +172,7 @@ export default function SupplementLog({ date }: Props) {
 
   function startEdit(s: SupplementWithLog) {
     setEditingId(s.id);
-    setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay, ingredients: s.ingredients || "" });
+    setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay, ingredients: s.ingredients || "", schedule: s.schedule ?? DAILY });
     setExpandedId(null);
   }
 
@@ -191,6 +191,7 @@ export default function SupplementLog({ date }: Props) {
         pills: Number(editForm.pills) || 1,
         timeOfDay: editForm.timeOfDay,
         ingredients: editForm.ingredients.trim(),
+        schedule: editForm.schedule,
       }),
     });
     setEditSaving(false);
@@ -316,12 +317,30 @@ export default function SupplementLog({ date }: Props) {
 
   // ── derived ────────────────────────────────────────────────────────────────
 
-  const grouped = TIME_ORDER.map((t) => ({
-    time: t,
-    items: items.filter((i) => i.timeOfDay === t),
-  })).filter((g) => g.items.length > 0);
+  // Supplements on a non-daily schedule only belong in today's checklist on the days
+  // they're due. The rest stay reachable in a collapsed group — an off-schedule dose is
+  // still loggable, it just shouldn't count against the day's ratio.
+  const dueToday = items.filter((i) => isScheduledOn(i.schedule, date));
+  const notDueToday = items.filter((i) => !isScheduledOn(i.schedule, date));
 
-  const takenCount = items.filter((i) => i.taken).length;
+  const grouped: Array<{
+    key: string; label: string; icon: string; color: string; items: SupplementWithLog[]; muted?: boolean;
+  }> = TIME_ORDER
+    .map((t) => ({
+      key: t, label: TIME_LABELS[t], icon: TIME_ICONS[t], color: TIME_CSS_COLORS[t],
+      items: dueToday.filter((i) => i.timeOfDay === t),
+    }))
+    .filter((g) => g.items.length > 0);
+
+  if (notDueToday.length > 0) {
+    grouped.push({
+      key: "__not-due", label: "Not scheduled today", icon: "⏸️",
+      color: "var(--text-dim)", items: notDueToday, muted: true,
+    });
+  }
+
+  const takenCount = dueToday.filter((i) => i.taken).length;
+  const dueCount = dueToday.length;
 
   // ── render ─────────────────────────────────────────────────────────────────
 
@@ -335,9 +354,10 @@ export default function SupplementLog({ date }: Props) {
           <div>
             <h3 className="text-sm font-bold"
               style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>Supplements</h3>
-            {items.length > 0 && (
+            {dueCount > 0 && (
               <p className="text-xs" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                <span style={{ color: takenCount === items.length ? "#34d399" : "var(--text-dim)" }}>{takenCount}/{items.length}</span> taken today
+                <span style={{ color: takenCount === dueCount ? "#34d399" : "var(--text-dim)" }}>{takenCount}/{dueCount}</span> due today
+                {notDueToday.length > 0 && <span> · {notDueToday.length} off-schedule</span>}
               </p>
             )}
           </div>
@@ -386,16 +406,16 @@ export default function SupplementLog({ date }: Props) {
           </button>
         </div>
       </div>
-      {/* Adherence progress bar */}
-      {items.length > 0 && (
+      {/* Adherence progress bar — measured against today's due doses */}
+      {dueCount > 0 && (
         <div className="px-5 py-2.5" style={{ borderBottom: "1px solid var(--border)" }}>
           <div className="flex items-center gap-2">
             <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.07)" }}>
               <div
                 className="h-full rounded-full transition-all duration-700"
                 style={{
-                  width: `${Math.max((takenCount / items.length) * 100, takenCount > 0 ? 4 : 0)}%`,
-                  background: takenCount === items.length
+                  width: `${Math.max((takenCount / dueCount) * 100, takenCount > 0 ? 4 : 0)}%`,
+                  background: takenCount === dueCount
                     ? "#34d399"
                     : "linear-gradient(90deg, #34d399, #fbbf24)",
                   boxShadow: takenCount > 0 ? "0 0 8px rgba(52,211,153,0.5)" : "none",
@@ -403,7 +423,7 @@ export default function SupplementLog({ date }: Props) {
               />
             </div>
             <span className="text-[10px] tabular-nums shrink-0" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              {Math.round((takenCount / items.length) * 100)}%
+              {Math.round((takenCount / dueCount) * 100)}%
             </span>
           </div>
         </div>
@@ -481,17 +501,25 @@ export default function SupplementLog({ date }: Props) {
         </div>
       )}
 
+      {/* ── Missing label ingredients ────────────────────────────────────── */}
+      {items.length > 0 && !loadError && <MissingLabelsCard items={items} onSaved={load} />}
+
       {/* ── Supplement list ──────────────────────────────────────────────── */}
-      {grouped.map(({ time, items: group }) => (
-        <div key={time}>
+      {grouped.map((g) => (
+        <div key={g.key} style={g.muted ? { opacity: 0.6 } : undefined}>
           <div className="px-5 py-2 flex items-center gap-2" style={{ borderTop: "1px solid var(--border-dim)" }}>
-            <span className="text-sm">{TIME_ICONS[time]}</span>
+            <span className="text-sm">{g.icon}</span>
             <span className="text-[10px] font-semibold uppercase tracking-wide"
-              style={{ color: TIME_CSS_COLORS[time], fontFamily: "var(--font-mono)" }}>
-              {TIME_LABELS[time]}
+              style={{ color: g.color, fontFamily: "var(--font-mono)" }}>
+              {g.label}
             </span>
+            {g.muted && (
+              <span className="text-[10px]" style={{ color: "var(--text-dim)" }}>
+                — not due today; log anyway if you took one
+              </span>
+            )}
           </div>
-          {group.map((s) => (
+          {g.items.map((s) => (
             <div key={s.id} style={{ borderTop: "1px solid var(--border-dim)" }}>
               <div className="flex items-center gap-3 px-5 py-3 group transition-colors"
                 style={{ background: "transparent" }}
@@ -527,16 +555,17 @@ export default function SupplementLog({ date }: Props) {
                   <p className="text-xs flex items-center flex-wrap gap-x-1.5 gap-y-0.5" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
                     {s.brand ? <span className="uppercase tracking-wide" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
                     <span>{s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}</span>
+                    <ScheduleChip schedule={s.schedule} />
                     {adherence && (
                       <span
                         className="px-1.5 py-0.5 rounded"
                         style={{
                           fontSize: "0.6rem", background: "var(--bg-raised)",
-                          color: adherenceColor(adherence.week[s.id] ?? 0, eligibleDays(s.createdAt, date, adherence.weekDays)),
+                          color: adherenceColor(adherence.week[s.id]),
                         }}
-                        title={`Taken ${adherence.week[s.id] ?? 0}/${adherence.weekDays} days in the last week · ${adherence.month[s.id] ?? 0}/${adherence.monthDays} in the last month`}
+                        title={`Taken ${adherence.week[s.id]?.taken ?? 0} of ${adherence.week[s.id]?.scheduled ?? 0} scheduled days in the last week · ${adherence.month[s.id]?.taken ?? 0}/${adherence.month[s.id]?.scheduled ?? 0} in the last month · ${describeSchedule(s.schedule)}`}
                       >
-                        {adherence.week[s.id] ?? 0}/{adherence.weekDays}d
+                        {adherence.week[s.id]?.taken ?? 0}/{adherence.week[s.id]?.scheduled ?? 0}d
                       </span>
                     )}
                   </p>
@@ -684,6 +713,15 @@ export default function SupplementLog({ date }: Props) {
                         {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_LABELS[t]}</option>)}
                       </select>
                     </div>
+                  </div>
+                  {/* How often it's actually due — adherence is scored against this */}
+                  <div className="space-y-1">
+                    <p className="text-[9px] uppercase tracking-wide"
+                      style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Repeat</p>
+                    <ScheduleEditor
+                      value={editForm.schedule}
+                      onChange={(schedule) => setEditForm((f) => ({ ...f, schedule }))}
+                    />
                   </div>
                   {/* Label ingredients — the only source the AI is allowed to use when
                       judging overlaps inside a multi-ingredient product. */}

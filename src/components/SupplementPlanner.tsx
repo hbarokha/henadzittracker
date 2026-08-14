@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback } from "react";
 import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
 import { IconCalendar, IconPill } from "@/components/icons";
 import SupplementAddPanel from "./supplements/SupplementAddPanel";
-import { InfoBadge, TipBadge, TIME_ORDER, TIME_LABELS, TIME_ICONS, type DraftSupplement } from "./supplements/shared";
+import {
+  InfoBadge, TipBadge, TIME_ORDER, TIME_LABELS, TIME_ICONS,
+  ScheduleEditor, ScheduleChip, type DraftSupplement,
+} from "./supplements/shared";
+import { type SupplementSchedule, DAILY, describeSchedule } from "@/lib/schedule";
 
 interface PlanCandidate {
   id: string;
@@ -17,8 +21,10 @@ interface PlanCandidate {
   description?: string;
   usageTip?: string;
   ingredients?: string;
+  schedule?: SupplementSchedule;
   active: boolean;
   recentTaken: number;
+  recentScheduled: number;
   suggested: boolean;
   reason: string;
   lastUsed: string;
@@ -34,9 +40,10 @@ interface Row {
   unit: SupplementUnit;
   pills: string;
   timeOfDay: TimeOfDay;
+  schedule: SupplementSchedule;
   included: boolean;
   // frozen suggestion, so "reset to suggested" and the hint work
-  sug: { included: boolean; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay } | null;
+  sug: { included: boolean; dose: string; unit: SupplementUnit; pills: string; timeOfDay: TimeOfDay; schedule: SupplementSchedule } | null;
   // Carried from history so the plan screen shows the same what-it-does / how-to-take
   // context as the AI Recommendations cards, and so a re-added row keeps them.
   description?: string;
@@ -60,6 +67,7 @@ function candidateToRow(c: PlanCandidate): Row {
     unit: c.unit,
     pills: String(c.pills ?? 1),
     timeOfDay: c.timeOfDay,
+    schedule: c.schedule ?? DAILY,
   };
   return {
     key: c.id,
@@ -70,6 +78,7 @@ function candidateToRow(c: PlanCandidate): Row {
     unit: sug.unit,
     pills: sug.pills,
     timeOfDay: sug.timeOfDay,
+    schedule: sug.schedule,
     included: c.suggested,
     sug,
     description: c.description,
@@ -84,7 +93,9 @@ function candidateToRow(c: PlanCandidate): Row {
 
 function rowEditedFromSuggestion(r: Row): boolean {
   if (!r.sug) return false;
-  return r.dose !== r.sug.dose || r.unit !== r.sug.unit || r.pills !== r.sug.pills || r.timeOfDay !== r.sug.timeOfDay;
+  return r.dose !== r.sug.dose || r.unit !== r.sug.unit || r.pills !== r.sug.pills
+    || r.timeOfDay !== r.sug.timeOfDay
+    || JSON.stringify(r.schedule) !== JSON.stringify(r.sug.schedule);
 }
 
 const inputStyle: React.CSSProperties = {
@@ -131,7 +142,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
   function resetRowToSuggestion(key: string) {
     setRows((prev) => prev.map((r) => {
       if (r.key !== key || !r.sug) return r;
-      return { ...r, dose: r.sug.dose, unit: r.sug.unit, pills: r.sug.pills, timeOfDay: r.sug.timeOfDay, included: true };
+      return { ...r, dose: r.sug.dose, unit: r.sug.unit, pills: r.sug.pills, timeOfDay: r.sug.timeOfDay, schedule: r.sug.schedule, included: true };
     }));
     setSavedMsg(null);
   }
@@ -140,7 +151,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
     setRows((prev) => prev.map((r) => {
       if (r.isNew) return { ...r, included: false };
       if (!r.sug) return r;
-      return { ...r, included: r.sug.included, dose: r.sug.dose, unit: r.sug.unit, pills: r.sug.pills, timeOfDay: r.sug.timeOfDay };
+      return { ...r, included: r.sug.included, dose: r.sug.dose, unit: r.sug.unit, pills: r.sug.pills, timeOfDay: r.sug.timeOfDay, schedule: r.sug.schedule };
     }));
     setSavedMsg(null);
   }
@@ -164,6 +175,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
         unit: d.unit,
         pills: String(d.pills ?? 1),
         timeOfDay: d.timeOfDay,
+        schedule: d.schedule ?? DAILY,
         included: true,
         sug: null,
         description: d.description,
@@ -195,6 +207,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
           unit: r.unit,
           pills: Number(r.pills) || 1,
           timeOfDay: r.timeOfDay,
+          schedule: r.schedule,
           // Only used when the row creates a new entry; an existing id keeps its own.
           description: r.description,
           usageTip: r.usageTip,
@@ -328,6 +341,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
                           {r.recentTaken > 0 && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--bg-high)", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>taken {r.recentTaken}× / 2wk</span>
                           )}
+                          <ScheduleChip schedule={r.schedule} />
                           {r.sug?.included && (
                             <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--amber-dim)", color: "var(--amber)", fontFamily: "var(--font-mono)" }}>SUGGESTED</span>
                           )}
@@ -359,10 +373,12 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
                         {TIME_ORDER.map((t) => <option key={t} value={t}>{TIME_ICONS[t]} {TIME_LABELS[t]}</option>)}
                       </select>
                     </div>
+                    {/* How often it's due next week — drives the adherence denominator */}
+                    <ScheduleEditor value={r.schedule} onChange={(schedule) => patchRow(r.key, { schedule })} />
                     <div className="flex items-center gap-2 flex-wrap">
                       {total > 0 && (
                         <span className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-                          = {total}{r.unit}/day total
+                          = {total}{r.unit}/day{r.schedule.type !== "daily" ? ` on ${describeSchedule(r.schedule).toLowerCase()}` : " total"}
                         </span>
                       )}
                       {edited && r.sug && (

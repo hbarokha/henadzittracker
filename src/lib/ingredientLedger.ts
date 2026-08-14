@@ -137,6 +137,28 @@ function isKnownNutrient(name: string): boolean {
   return !!n && ALIASES.some(([re]) => re.test(n));
 }
 
+/**
+ * Does the entry's own name state its contents? A plain single-ingredient entry
+ * ("Glycine", "Magnesium bisglycinate") does; a branded blend ("AG1", "NOVOS Core")
+ * does not, and must not be guessed at.
+ */
+function isSelfDescribing(s: Pick<Supplement, "name" | "brand">): boolean {
+  const name = (s.name ?? "").trim();
+  if (!name) return false;
+  return isKnownNutrient(name) || (!s.brand && name.split(/\s+/).length <= 3);
+}
+
+/**
+ * Is this entry one whose label we actually need? True for products the ledger cannot
+ * account for at all — no recorded ingredients and a name that doesn't describe them.
+ * Drives the "missing labels" nudge, and is the exact inverse of what the ledger can use.
+ */
+export function needsLabel(s: Pick<Supplement, "name" | "brand" | "ingredients">): boolean {
+  if (s.ingredients?.trim()) return false;
+  if (!(s.name ?? "").trim()) return false;
+  return !isSelfDescribing(s);
+}
+
 // ── free-text label parsing ───────────────────────────────────────────────────
 
 export interface ParsedIngredient {
@@ -243,11 +265,9 @@ export function buildIngredientLedger(stack: Supplement[]): IngredientLedger {
       continue;
     }
 
-    // No recorded label. A plain single-ingredient entry names its own contents
-    // ("Glycine", "Magnesium bisglycinate") — safe to sum. Anything else (a branded
-    // multi-ingredient product) stays unknown rather than being guessed at.
-    const selfDescribing = isKnownNutrient(s.name) || (!s.brand && (s.name ?? "").trim().split(/\s+/).length <= 3);
-    if (!selfDescribing || !(s.dose > 0)) {
+    // No recorded label. A plain single-ingredient entry names its own contents —
+    // safe to sum. Anything else stays unknown rather than being guessed at.
+    if (!isSelfDescribing(s) || !(s.dose > 0)) {
       unknownProducts.push(product);
       continue;
     }
