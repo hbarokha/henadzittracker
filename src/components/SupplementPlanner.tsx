@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
 import { IconCalendar, IconPill } from "@/components/icons";
-import { InfoBadge, TipBadge } from "./supplements/shared";
+import SupplementAddPanel from "./supplements/SupplementAddPanel";
+import { InfoBadge, TipBadge, TIME_ORDER, TIME_LABELS, TIME_ICONS, type DraftSupplement } from "./supplements/shared";
 
 interface PlanCandidate {
   id: string;
@@ -48,9 +49,8 @@ interface Row {
   isNew: boolean;
 }
 
-const TIME_ORDER: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
-const TIME_LABELS: Record<TimeOfDay, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", any: "Anytime" };
-const TIME_ICONS: Record<TimeOfDay, string> = { morning: "🌅", afternoon: "☀️", evening: "🌙", any: "⏰" };
+// TIME_ORDER / TIME_LABELS / TIME_ICONS come from supplements/shared so the planner
+// can't drift from the daily checklist when a slot is added.
 const UNITS: SupplementUnit[] = ["mg", "mcg", "IU", "g"];
 
 function candidateToRow(c: PlanCandidate): Row {
@@ -103,6 +103,7 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,13 +150,28 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
     setSavedMsg(null);
   }
 
-  function addBlank() {
+  // A supplement collected by the add panel (manual / AI describe / label photo /
+  // barcode) becomes a checked draft row — NOT a library write. "Apply plan" is what
+  // commits it, so it can't be deactivated by the same apply that creates it.
+  function addDraftRow(d: DraftSupplement) {
     setRows((prev) => [
       ...prev,
       {
         key: `new-${Date.now()}-${prev.length}`,
-        name: "", brand: "", dose: "", unit: "mg", pills: "1", timeOfDay: "morning",
-        included: true, sug: null, active: false, recentTaken: 0, isNew: true,
+        name: d.name,
+        brand: d.brand ?? "",
+        dose: String(d.dose ?? ""),
+        unit: d.unit,
+        pills: String(d.pills ?? 1),
+        timeOfDay: d.timeOfDay,
+        included: true,
+        sug: null,
+        description: d.description,
+        usageTip: d.usageTip,
+        ingredients: d.ingredients,
+        active: false,
+        recentTaken: 0,
+        isNew: true,
       },
     ]);
     setSavedMsg(null);
@@ -253,12 +269,13 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
           <p className="text-xs max-w-sm mx-auto" style={{ color: "var(--text-dim)" }}>
             Add supplements from the Daily log tab, or start a plan with a new entry below.
           </p>
-          <button onClick={addBlank} className="mt-2 text-xs px-4 py-2 rounded-xl font-semibold"
+          <button onClick={() => setShowAdd(true)} className="mt-2 text-xs px-4 py-2 rounded-xl font-semibold"
             style={{ background: "var(--amber-dim)", color: "var(--amber)", border: "1px solid var(--amber-glow)" }}>
             + Add a supplement
           </button>
         </div>
       )}
+
 
       {/* Rows */}
       {rows.length > 0 && (
@@ -368,12 +385,26 @@ export default function SupplementPlanner({ onApplied }: { onApplied?: () => voi
             );
           })}
 
-          {/* Add not-in-history */}
-          <button onClick={addBlank}
+          {/* Add not-in-history — manual, AI description, label photo or barcode */}
+          <button onClick={() => setShowAdd((v) => !v)}
             className="w-full rounded-xl py-2.5 text-xs font-medium transition-colors"
-            style={{ border: "1px dashed var(--border-mid)", color: "var(--text-muted)", background: "transparent" }}>
-            + Add a supplement not in your history
+            style={{
+              border: `1px dashed ${showAdd ? "var(--amber-glow)" : "var(--border-mid)"}`,
+              color: showAdd ? "var(--amber)" : "var(--text-muted)",
+              background: "transparent",
+            }}>
+            {showAdd ? "✕ Close add panel" : "+ Add a supplement not in your history — type it, describe it, photo the label, or scan"}
           </button>
+        </div>
+      )}
+
+      {/* Add panel — same Manual / ✨ Describe / 📷 Photo / 🔲 Scan tabs as the daily
+          log, in draft mode: the result becomes a checked plan row, not a library write. */}
+      {showAdd && (
+        <div className="px-4 pb-4">
+          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid var(--border)" }}>
+            <SupplementAddPanel onDraft={addDraftRow} onClose={() => setShowAdd(false)} />
+          </div>
         </div>
       )}
 

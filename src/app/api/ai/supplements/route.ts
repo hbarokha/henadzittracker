@@ -6,16 +6,19 @@ import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
 import { heartbeatJson } from "@/lib/heartbeat";
 import { lookupIngredients } from "@/lib/ingredientLookup";
+import { formatIngredientLedger, TOP_UP_RULES } from "@/lib/ingredientLedger";
+import { TIME_OF_DAY_ENUM, TIME_OF_DAY_PROMPT_NOTE, isTimeOfDay } from "@/lib/timeOfDay";
 
 const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
 const SUPP_SCHEMA = `{
   "name": "string — exact supplement name (no brand prefix)",
   "brand": "string|null — brand name if known from label or context, otherwise null",
-  "dose": "number — typical recommended dose",
+  "dose": "number — the dose to ACTUALLY TAKE. When the ingredient ledger shows the stack already supplies some of this nutrient, this is the TOP-UP amount (target total minus what the stack already gives), not the full target",
   "unit": "mg|mcg|IU|g",
-  "timeOfDay": "morning|afternoon|evening|any — NEVER use 'daily'; use 'any' for supplements taken any time of day",
+  "timeOfDay": "${TIME_OF_DAY_ENUM} — NEVER use 'daily' or 'night'",
   "ingredients": "string|null — ONLY an ingredient list actually READ OFF a label in a supplied photo (comma-separated, amounts per serving where shown). null in every other case — never recall a branded product's formulation from memory",
+  "alreadyInStack": "string|null — set when the INGREDIENT LEDGER already supplies this nutrient: the existing daily amount, the product supplying it, and the resulting combined total, e.g. 'NOVOS Core already supplies 1 g glycine/day; +2 g here = 3 g/day total'. null when the stack supplies none of it",
   "description": "string — 1–2 sentences: what it is and its primary benefits",
   "usageTip": "string — 1–2 sentences: best practices (timing, food/water, interactions to avoid)",
   "reason": "string — 1 sentence: why this matches the request"
@@ -98,6 +101,10 @@ export async function POST(req: Request) {
       const stackBlock = allSupps.length
         ? `\n\nCurrent supplement stack (total daily doses):\n${allSupps.map(stackLine).join("\n")}`
         : "";
+      // Precomputed nutrient totals the stack already delivers — so a request for
+      // "glycine" is answered with the remaining top-up, not a duplicate full dose.
+      const ledger = formatIngredientLedger(allSupps);
+      const ledgerBlock = ledger ? `\n\n${ledger}` : "";
 
       // Grounded label lookup runs FIRST when the request names a product, so the
       // suggestion is built from a real ingredient panel instead of model recall.
@@ -110,7 +117,7 @@ Serving: ${lookup.servingSize ?? "not stated"}
 Label ingredients: ${lookup.ingredients}`
         : "";
 
-      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}${profileLine}${stackBlock}${verifiedBlock}
+      const systemPrompt = `You are a supplement and nutrition expert. Based on the user's request, suggest 1–3 appropriate supplements.${goalLine}${profileLine}${stackBlock}${ledgerBlock}${verifiedBlock}
 
 Return JSON:
 {
@@ -124,9 +131,11 @@ Rules:
 - Only recommend evidence-backed supplements${profile?.goal ? "\n- Align suggestions toward the user's stated health goal" : ""}
 - Dose must be a realistic, commonly available amount, appropriate for this user's age, sex, and body weight
 ${DOSAGE_OVERLAP_RULES}
+${TOP_UP_RULES}
+- A top-up dose must still be practical to buy and take — round it to a sensible capsule/scoop size and say so in "usageTip" if the rounding matters
 - If a suggested supplement (or the same nutrient inside a combo product) is already in the current stack, do not duplicate it — either skip it or explain the cumulative dose implication in "usageTip"
 - unit must be exactly: mg, mcg, IU, or g
-- timeOfDay must be exactly: morning, afternoon, evening, or any
+- ${TIME_OF_DAY_PROMPT_NOTE}
 - Return only valid JSON, no markdown`;
 
       const result = await callGemini([
@@ -162,8 +171,10 @@ ${DOSAGE_OVERLAP_RULES}
       const stackBlock = allSupps.length
         ? `\n\nUser's current supplement stack (total daily doses):\n${allSupps.map(stackLine).join("\n")}`
         : "";
+      const ledger = formatIngredientLedger(allSupps);
+      const ledgerBlock = ledger ? `\n\n${ledger}` : "";
       const systemPrompt = `You are a supplement expert. Identify the supplement(s) shown in this photo (typically a bottle or packaging).
-Extract name, dose, unit, and suggest timing. If multiple supplements are visible, return all of them.${stackBlock}
+Extract name, dose, unit, and suggest timing. If multiple supplements are visible, return all of them.${stackBlock}${ledgerBlock}
 
 Return JSON:
 {
@@ -173,7 +184,8 @@ Return JSON:
 Rules:
 - Extract the exact name and dose shown on the label
 - unit must be exactly: mg, mcg, IU, or g
-- timeOfDay must be exactly: morning, afternoon, evening, or any
+- ${TIME_OF_DAY_PROMPT_NOTE}
+- "dose" here is what the LABEL says (this is a product being logged, not a recommendation) — but if the INGREDIENT LEDGER shows the stack already supplies a nutrient this product contains, fill "alreadyInStack" with the existing amount, its source, and the combined total, and note in "usageTip" whether the combined total is still safe
 - If a Supplement Facts / ingredient panel is legible in the photo, TRANSCRIBE it into "ingredients" (comma-separated, with the per-serving amount where shown). This photo is the one trustworthy source of a blend's formulation — transcribe only what is actually visible, never fill gaps from memory; use null if no panel is legible
 - Only claim an overlap with the current stack when BOTH sides' ingredients are known (transcribed here, or listed as verified in the stack above). State the cumulative daily total in "usageTip" in that case; where a stack entry's ingredients are NOT RECORDED, say the overlap cannot be checked until its label is added
 - If the label is unclear, make a best guess for name/dose only
@@ -283,6 +295,9 @@ HRV status: ${na(sleep.hrvStatus)}`
         "",
         "## Current Supplement Stack (total daily doses + 7-day adherence)",
         existing.length ? existing.join("\n") : "None",
+        // Deterministic per-nutrient totals across the whole stack. Without this the
+        // model recommends a full clinical dose of something a blend already covers.
+        formatIngredientLedger(allSupps),
         body.context ? `\n## Additional context\n${body.context}` : "",
       ].filter((l) => l !== undefined).join("\n");
 
@@ -302,7 +317,7 @@ Return JSON:
       "currentDose": "number — its current TOTAL daily dose (dose × pills)",
       "suggestedDose": "number — the new TOTAL daily dose; equal to currentDose when change is 'timing'",
       "unit": "mg|mcg|IU|g — unchanged from the entry",
-      "timeOfDay": "morning|afternoon|evening|any — the suggested timing (repeat the current one unless change is 'timing')",
+      "timeOfDay": "${TIME_OF_DAY_ENUM} — the suggested timing (repeat the current one unless change is 'timing')",
       "reason": "string — 1–2 sentences citing the specific dose/metric/overlap that drives the change"
     }
   ],
@@ -319,12 +334,14 @@ Rules for ADD (recommendations), 2–5 items:
 - Do NOT suggest anything already in the "Current Supplement Stack" — including the same nutrient hidden inside a combo product whose ingredients are recorded; check ingredient-level overlap, not just product names
 - Every "reason" MUST cite a specific metric from the data (e.g. "avg stress 68/100 suggests cortisol support", "HRV 38ms is below optimal for active male")
 - Suggested doses must be tailored to this user's age, sex, and body weight, and must stay safe when ADDED ON TOP of the current stack's cumulative totals
+${TOP_UP_RULES}
 - Prioritise the most impactful gaps first; if a health goal is stated, weight recommendations toward it
 
 Rules for ADJUST (adjustments), 0–5 items — check EVERY entry for these:
-- Total daily dose below the effective range for this user's age/sex/weight → increase
-- Total daily dose approaching or above the tolerable upper limit, alone or once summed with the same nutrient in other products → decrease
+- Total daily dose below the effective range for this user's age/sex/weight → increase. Judge "below" against the INGREDIENT LEDGER total for that nutrient, not the single entry: if another product tops it up to an effective total, leave it alone
+- Total daily dose approaching or above the tolerable upper limit, alone or once summed with the same nutrient in other products (use the ledger totals) → decrease
 - Timing that undercuts absorption (competing minerals taken together, fat-soluble vitamins away from the fattiest meal, stimulating supplements in the evening) → timing
+- A sleep-active supplement (melatonin, glycine, magnesium, L-theanine, apigenin) sitting in "morning"/"afternoon"/"any", or an activating one (caffeine, B-complex, tyrosine) sitting in "evening"/"bedtime" → timing. Use "bedtime" (not "evening") when it should be taken 0–30 min before lights out
 - Never propose an adjustment that leaves the dose unchanged AND the timing unchanged — omit the entry instead
 
 Rules for STOP (removals), 0–4 items — a supplement earns removal when:
@@ -339,7 +356,7 @@ ${DOSAGE_OVERLAP_RULES}
 - "id" values in adjustments and removals MUST be copied exactly from the stack list — never invent one, and never list the same id in both arrays
 - Consider age, sex, weight, activity level, VO2 max, body composition, blood pressure, training load, nutrition gaps (low protein/fat/calories), sleep quality, HRV, stress, and adherence patterns together
 - unit must be exactly: mg, mcg, IU, or g
-- timeOfDay must be exactly: morning, afternoon, evening, or any
+- ${TIME_OF_DAY_PROMPT_NOTE}
 - Return all three keys even when an array is empty
 - Return only valid JSON, no markdown`;
 
@@ -362,12 +379,15 @@ ${DOSAGE_OVERLAP_RULES}
         const suggested = Number(a.suggestedDose);
         const doseMoved = Number.isFinite(suggested) && suggested > 0
           && Math.abs(suggested - currentTotal) / currentTotal > 0.01;
-        const timeMoved = typeof a.timeOfDay === "string" && a.timeOfDay !== s.timeOfDay;
+        // An invented slot ("night", "daily") would otherwise read as a timing change and
+        // then be silently flattened to "any" on save — treat it as no change at all.
+        const suggestedTime = isTimeOfDay(a.timeOfDay) ? a.timeOfDay : s.timeOfDay;
+        const timeMoved = suggestedTime !== s.timeOfDay;
         if (!doseMoved && !timeMoved) return false;
         // Report the true current total rather than whatever the model echoed back.
         a.currentDose = currentTotal;
         a.unit = s.unit;
-        if (!timeMoved) a.timeOfDay = s.timeOfDay;
+        a.timeOfDay = suggestedTime;
         if (!doseMoved) { a.suggestedDose = currentTotal; a.change = "timing"; }
         return true;
       });
@@ -437,6 +457,8 @@ ${DOSAGE_OVERLAP_RULES}
 ## User's supplement stack (total daily doses + 7-day adherence)
 ${stackLines}
 
+${formatIngredientLedger(allSupps)}
+
 ## Health context
 ${contextLines || "No health data available"}
 
@@ -454,8 +476,9 @@ Return JSON with EXACTLY this shape:
 Rules:
 - Return one entry per supplement in the stack — use the exact id values from the list
 ${DOSAGE_OVERLAP_RULES}
-- If a supplement's total daily dose is notably low or high for this user (age/sex/weight), say so in its usageTip with the suggested adjustment
-- If the same nutrient appears in more than one product in the stack, each affected usageTip must state the combined daily total and whether to adjust or space the doses
+- If a supplement's total daily dose is notably low or high for this user (age/sex/weight), say so in its usageTip with the suggested adjustment — judged against the INGREDIENT LEDGER total for that nutrient, since another product may already be topping it up
+- If the same nutrient appears in more than one product in the stack, each affected usageTip must state the combined daily total from the ledger and whether to adjust or space the doses
+- Where timing matters most at a precise moment, say which slot: "evening" (with/after dinner) vs "before bedtime" (0–30 min before lights out)
 - usageTip must be specific and actionable, referencing their goal or a data signal when relevant (e.g. "Take in the evening — your HRV of 38ms suggests your nervous system benefits from nighttime magnesium")
 - Use dietary fat intake when advising on fat-soluble vitamins (D, K2, E, A, omega-3): pair them with the fattiest meal
 - description must be concise and relevant to this specific user, not generic

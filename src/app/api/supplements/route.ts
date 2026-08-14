@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceForRange, type TimeOfDay, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceForRange, type PlanItem } from "@/lib/supplements";
+import { isTimeOfDay, sanitizeTimeOfDay } from "@/lib/timeOfDay";
 import { shiftDate, dateRange } from "@/lib/summary/snapshots";
 
-const VALID_TIMES = new Set<string>(["morning", "afternoon", "evening", "any"]);
-function sanitizeTime(t: string | undefined): TimeOfDay {
-  return VALID_TIMES.has(t ?? "") ? (t as TimeOfDay) : "any";
-}
+const sanitizeTime = sanitizeTimeOfDay;
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -19,7 +17,7 @@ export async function GET(req: Request) {
     // even after a weekly-plan change deactivated them.
     const { supplements, log } = await getDailyView(date);
     // Fix any stored supplements that have an invalid timeOfDay (e.g. "daily" from AI)
-    const broken = supplements.filter((s) => !VALID_TIMES.has(s.timeOfDay));
+    const broken = supplements.filter((s) => !isTimeOfDay(s.timeOfDay));
     for (const s of broken) {
       s.timeOfDay = "any";
       await updateSupplement(s.id, { timeOfDay: "any" });

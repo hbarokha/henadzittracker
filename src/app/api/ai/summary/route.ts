@@ -9,6 +9,7 @@ import { recordBioAge } from "@/lib/bioage";
 import { generateSummary } from "@/lib/summary/providers";
 import { SUMMARY_SYSTEM_PROMPT } from "@/lib/summary/prompt";
 import { readGarminCache, shiftDate, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
+import { formatIngredientLedger } from "@/lib/ingredientLedger";
 
 // ── summary cache ─────────────────────────────────────────────────────────────
 
@@ -140,9 +141,11 @@ export async function POST(req: Request) {
   // cached summary was generated (syncedAt timestamps excluded — they change on
   // every sync even when the values don't)
   // promptVersion invalidates caches when the output structure changes (v2: training section;
-  // v3: supplement ingredient-grounding rule — v2 answers may assert invented blend contents)
+  // v3: supplement ingredient-grounding rule — v2 answers may assert invented blend contents;
+  // v4: ingredient ledger + top-up dosing — v3 answers suggest full doses of nutrients a blend
+  // already supplies, and predate the "before bedtime" slot)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { promptVersion: 3, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
+    { promptVersion: 4, profile, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -316,7 +319,9 @@ ${supplements.map((s) => {
       ? ` | LABEL INGREDIENTS (verified): ${s.ingredients.trim()}`
       : ` | LABEL INGREDIENTS: NOT RECORDED`;
     return `  - ${label} ${s.dose}${s.unit}${pillsStr} (${s.timeOfDay}) — today: ${todayTaken} | 7-day: ${w}/${weekDates.length} | 30-day: ${m}/${monDates.length}${ing}${extra ? ` | notes: ${extra}` : ""}`;
-  }).join("\n")}`
+  }).join("\n")}
+
+${formatIngredientLedger(supplements)}`
   : "No supplements configured"}
 
 ---

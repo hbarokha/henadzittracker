@@ -4,9 +4,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
 import CameraModal from "../CameraModal";
 import {
-  type AISuggestion,
+  type AISuggestion, type DraftSupplement,
   TIME_ORDER, TIME_LABELS,
-  SuggestionCard, postSupplement,
+  SuggestionCard, postSupplement, suggestionUsageTip,
 } from "./shared";
 
 declare class BarcodeDetector {
@@ -21,9 +21,16 @@ type AddTab = "manual" | "describe" | "photo" | "barcode";
 
 interface Props {
   /** Called after a supplement was successfully added — parent reloads its list. */
-  onSaved: () => void | Promise<void>;
+  onSaved?: () => void | Promise<void>;
   /** Close the panel (cancel or after save). Unmounting discards all panel state. */
   onClose: () => void;
+  /**
+   * Draft mode. When given, the panel does NOT write to the library — it hands the
+   * collected supplement back instead. The weekly planner needs this: its rows are a
+   * draft reconciled by "Apply plan", and a supplement written straight to the stack
+   * mid-plan would be deactivated again by the very next apply.
+   */
+  onDraft?: (draft: DraftSupplement) => void;
 }
 
 /**
@@ -31,7 +38,7 @@ interface Props {
  * Owns all add-flow state (forms, AI suggestions, barcode camera) so SupplementLog
  * stays focused on the daily checklist.
  */
-export default function SupplementAddPanel({ onSaved, onClose }: Props) {
+export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props) {
   const [addTab, setAddTab] = useState<AddTab>("manual");
   const [saving, setSaving] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
@@ -164,15 +171,26 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
 
   // ── save actions ───────────────────────────────────────────────────────────
 
-  async function finishAdd() {
-    await onSaved();
+  /**
+   * Single exit point for every tab. In draft mode the entry is handed to the caller;
+   * otherwise it's written to the library and the parent reloads. Either way the panel
+   * closes, discarding its state.
+   */
+  async function commit(draft: DraftSupplement) {
+    if (onDraft) {
+      onDraft(draft);
+      onClose();
+      return;
+    }
+    await postSupplement({ ...draft });
+    await onSaved?.();
     onClose();
   }
 
   async function bcAdd() {
     if (!bcConfirm || !bcConfirm.name.trim() || !bcConfirm.dose) return;
     setSaving(true);
-    await postSupplement({
+    await commit({
       name: bcConfirm.name.trim(),
       brand: bcConfirm.brand?.trim() || undefined,
       dose: Number(bcConfirm.dose),
@@ -182,14 +200,13 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
     });
     setSaving(false);
     bcReset();
-    await finishAdd();
   }
 
   async function saveManual() {
     if (!manualForm.name.trim() || !manualForm.dose) return;
     setSaving(true);
-    await postSupplement({
-      name: manualForm.name,
+    await commit({
+      name: manualForm.name.trim(),
       brand: manualForm.brand || undefined,
       dose: Number(manualForm.dose),
       unit: manualForm.unit,
@@ -197,19 +214,16 @@ export default function SupplementAddPanel({ onSaved, onClose }: Props) {
       timeOfDay: manualForm.timeOfDay,
     });
     setSaving(false);
-    await finishAdd();
   }
 
   async function saveSuggestion(s: AISuggestion) {
     if (!s.name?.trim() || !s.dose) return;
-    const key = `${s.name}-${s.dose}`;
-    setAddingId(key);
-    await postSupplement({
+    setAddingId(`${s.name}-${s.dose}`);
+    await commit({
       name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
-      description: s.description, usageTip: s.usageTip, ingredients: s.ingredients,
+      description: s.description, usageTip: suggestionUsageTip(s), ingredients: s.ingredients,
     });
     setAddingId(null);
-    await finishAdd();
   }
 
   // ── AI: describe ───────────────────────────────────────────────────────────

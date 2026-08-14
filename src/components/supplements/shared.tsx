@@ -1,6 +1,10 @@
 "use client";
 
-import type { SupplementUnit, TimeOfDay } from "@/lib/supplements";
+import type { SupplementUnit } from "@/lib/supplements";
+import type { TimeOfDay } from "@/lib/timeOfDay";
+import {
+  TIME_OF_DAY_ORDER, TIME_OF_DAY_LABELS, TIME_OF_DAY_ICONS, TIME_OF_DAY_COLORS,
+} from "@/lib/timeOfDay";
 
 // ── shared types & constants for the supplement UI ───────────────────────────
 
@@ -15,13 +19,39 @@ export interface AISuggestion {
   reason: string;
   /** Label ingredients — only set when read off a label photo, never guessed. */
   ingredients?: string;
+  /**
+   * Set when the stack already supplies this nutrient: how much, from which product,
+   * and the combined total. The suggested `dose` is then the top-up, not the full
+   * target — this line is what makes that visible instead of looking like a duplicate.
+   */
+  alreadyInStack?: string;
 }
 
-export const TIME_ORDER: TimeOfDay[] = ["morning", "afternoon", "evening", "any"];
+export const TIME_ORDER = TIME_OF_DAY_ORDER;
 export const VALID_TOD = new Set<string>(TIME_ORDER);
-export const TIME_LABELS: Record<TimeOfDay, string> = { morning: "Morning", afternoon: "Afternoon", evening: "Evening", any: "Anytime" };
-export const TIME_ICONS: Record<TimeOfDay, string> = { morning: "🌅", afternoon: "☀️", evening: "🌙", any: "⏰" };
-export const TIME_CSS_COLORS: Record<TimeOfDay, string> = { morning: "#fbbf24", afternoon: "#38bdf8", evening: "#a78bfa", any: "var(--text-dim)" };
+export const TIME_LABELS = TIME_OF_DAY_LABELS;
+export const TIME_ICONS = TIME_OF_DAY_ICONS;
+export const TIME_CSS_COLORS = TIME_OF_DAY_COLORS;
+
+/** A supplement the add panel has finished collecting — saved, or handed to a caller. */
+export interface DraftSupplement {
+  name: string;
+  brand?: string;
+  dose: number;
+  unit: SupplementUnit;
+  pills?: number;
+  timeOfDay: TimeOfDay;
+  description?: string;
+  usageTip?: string;
+  ingredients?: string;
+}
+
+// The tip to store when a suggestion is added. The top-up note travels with it —
+// otherwise the entry lands in the stack at a reduced dose with nothing left to
+// explain why it isn't the full clinical amount.
+export function suggestionUsageTip(s: AISuggestion): string | undefined {
+  return [s.usageTip, s.alreadyInStack].filter(Boolean).join(" ") || undefined;
+}
 
 // POST a new supplement to the library (used by the add panel, AI suggestions,
 // and the recommendations section).
@@ -75,6 +105,17 @@ export function SuggestionCard({ s, onAdd, adding }: {
       </div>
       {s.reason && (
         <p className="text-xs italic" style={{ color: "#38bdf8", opacity: 0.85 }}>&quot;{s.reason}&quot;</p>
+      )}
+      {/* Top-up note — the dose above is what's MISSING, not the full daily target */}
+      {s.alreadyInStack && (
+        <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2"
+          style={{ color: "#818cf8", background: "rgba(129,140,248,0.08)", border: "1px solid rgba(129,140,248,0.2)" }}>
+          <span className="flex-shrink-0 mt-0.5">⚖️</span>
+          <span className="leading-relaxed">
+            <span className="font-semibold">Already in your stack — this is a top-up. </span>
+            {s.alreadyInStack}
+          </span>
+        </div>
       )}
       {s.description && <InfoBadge text={s.description} />}
       {s.usageTip && <TipBadge text={s.usageTip} />}

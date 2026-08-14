@@ -1,7 +1,11 @@
 import { readJson, mutateJson } from "@/lib/storage";
+import type { TimeOfDay } from "@/lib/timeOfDay";
 
 export type SupplementUnit = "mg" | "mcg" | "IU" | "g";
-export type TimeOfDay = "morning" | "afternoon" | "evening" | "any";
+// Slots live in lib/timeOfDay so client components can import the labels/order without
+// pulling in the storage layer. Re-exported here since every consumer already imports
+// the supplement types from this module.
+export type { TimeOfDay };
 
 export interface Supplement {
   id: string;

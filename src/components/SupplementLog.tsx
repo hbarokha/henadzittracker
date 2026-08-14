@@ -6,7 +6,7 @@ import SupplementAddPanel from "./supplements/SupplementAddPanel";
 import {
   type AISuggestion,
   TIME_ORDER, VALID_TOD, TIME_LABELS, TIME_ICONS, TIME_CSS_COLORS,
-  InfoBadge, TipBadge, SuggestionCard, postSupplement,
+  InfoBadge, TipBadge, SuggestionCard, postSupplement, suggestionUsageTip,
 } from "./supplements/shared";
 import { IconPill } from "@/components/icons";
 
@@ -139,7 +139,7 @@ export default function SupplementLog({ date }: Props) {
     setAddingId(key);
     await postSupplement({
       name: s.name, brand: s.brand || undefined, dose: Number(s.dose), unit: s.unit, timeOfDay: s.timeOfDay,
-      description: s.description, usageTip: s.usageTip,
+      description: s.description, usageTip: suggestionUsageTip(s), ingredients: s.ingredients,
     });
     setAddingId(null);
     setRecommendations((prev) => prev.filter((r) => r.name !== s.name));
