@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconActivity } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_STRESS } from "@/lib/widgetTips";
 
 interface StressRow {
   date: string;
@@ -29,6 +31,7 @@ function stressLabel(v: number): string {
 // Stress trend — average daily stress from cached Garmin data (no live calls).
 // Window selectable: 7 / 14 / 30 days.
 export default function StressChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Stress", TIP_STRESS);
   const [rows, setRows] = useState<StressRow[]>([]);
   const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
@@ -92,8 +95,11 @@ export default function StressChart({ date, refreshKey }: { date: string; refres
             </p>
           </div>
         )}
+        {tip.button}
         </div>
       </div>
+
+      {tip.panel}
 
       {pts.length > 1 ? (
         <div className="px-5 pt-3 pb-1">

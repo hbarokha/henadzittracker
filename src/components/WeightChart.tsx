@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import ExtremeLabels from "@/components/ExtremeLabels";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_WEIGHT } from "@/lib/widgetTips";
 import { IconScale } from "@/components/icons";
 
 interface WeightEntry {
@@ -26,6 +28,7 @@ const COMP_FIELDS: { key: "bodyFatPct" | "muscleMassKg" | "bodyWaterPct" | "bone
 ];
 
 export default function WeightChart({ todayIso }: Props) {
+  const tip = useInfoTip("Body Weight", TIP_WEIGHT);
   const [entries, setEntries] = useState<WeightEntry[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [input, setInput] = useState("");
@@ -134,8 +137,10 @@ export default function WeightChart({ todayIso }: Props) {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={() => setShowAdd((v) => !v)}
+          aria-label="Log weight"
           className="w-8 h-8 rounded-lg flex items-center justify-center transition-all"
           style={{
             background: showAdd ? "var(--amber-dim)" : "var(--bg-raised)",
@@ -148,7 +153,11 @@ export default function WeightChart({ todayIso }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
           </svg>
         </button>
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       {/* Add form */}
       {showAdd && (

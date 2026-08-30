@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { MICROS, aggregateFoodMicros, aggregateSupplementMicros, type MicroTotals } from "@/lib/micros";
 import { IconBeaker } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_MICROS } from "@/lib/widgetTips";
 
 interface LogEntry {
   id: string;
@@ -27,6 +29,7 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 // (dose × pills, keyword-matched to nutrients) vs adult-male daily targets.
 // Nobody else combines the two sources; that's the point of this panel.
 export default function MicrosPanel({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Micronutrients", TIP_MICROS);
   const [food, setFood] = useState<MicroTotals>({});
   const [supp, setSupp] = useState<MicroTotals>({});
   const [foodCoverage, setFoodCoverage] = useState<{ withMicros: number; total: number }>({ withMicros: 0, total: 0 });
@@ -83,13 +86,18 @@ export default function MicrosPanel({ date, refreshKey }: { date: string; refres
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         <button onClick={() => setOpen((v) => !v)}
           aria-pressed={open}
           className="text-[11px] px-3 py-2 min-h-[36px] rounded-lg transition-colors"
           style={{ color: "var(--text-muted)", background: "var(--bg-raised)", border: "1px solid var(--border-mid)", fontFamily: "var(--font-mono)" }}>
           {open ? "top 6" : `all ${MICROS.length}`}
         </button>
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       <div className="px-5 py-4 space-y-2.5">
         {!loaded && (

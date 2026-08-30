@@ -33,9 +33,14 @@ export default function ExtremeLabels({
     const x = toX(p.i);
     const anchor = x < 34 ? "start" : x > width - 34 ? "end" : "middle";
     const y = Math.max(yMin, Math.min(yMax, isMax ? toY(p.v) - 6 : toY(p.v) + 13));
+    // The knockout halo (stroke + paintOrder) matters here: these labels land
+    // wherever the data puts them, which is regularly on top of a gridline or of
+    // the series line itself.
     return (
       <text key={isMax ? "max" : "min"} x={x} y={y} textAnchor={anchor}
-        fontSize="9" fill="var(--text-muted)" fontFamily="var(--font-mono)">
+        fontSize="9" fill="var(--text-muted)" fontFamily="var(--font-mono)"
+        stroke="var(--bg-surface)" strokeWidth="3" paintOrder="stroke"
+        strokeLinejoin="round">
         {isMax ? "▲" : "▼"}{format(p.v)}
       </text>
     );

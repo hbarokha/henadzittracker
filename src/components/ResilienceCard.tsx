@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconHeart } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_RESILIENCE } from "@/lib/widgetTips";
 
 interface Component {
   key: string;
@@ -31,6 +33,7 @@ function levelColor(level?: string): string {
 // vs the user's own 28-day baseline (HRV, resting HR, stress, Body Battery
 // recharge). Deterministic, from cached Garmin data only.
 export default function ResilienceCard({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Resilience", TIP_RESILIENCE);
   const [data, setData] = useState<ResilienceData | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -68,6 +71,7 @@ export default function ResilienceCard({ date, refreshKey }: { date: string; ref
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-3 shrink-0">
         {data?.score != null && (
           <div className="text-right shrink-0">
             <div className="flex items-baseline gap-1 justify-end">
@@ -81,7 +85,11 @@ export default function ResilienceCard({ date, refreshKey }: { date: string; ref
             </p>
           </div>
         )}
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       {data?.score != null ? (
         <div className="px-5 pt-3 pb-1">

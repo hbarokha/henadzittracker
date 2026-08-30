@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconBars } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_METRIC_COMPARE } from "@/lib/widgetTips";
 
 // Compare any two metrics over the same window — two stacked panels sharing one
 // x-axis (never a dual-axis chart). Panel colors are fixed by position: A violet,
@@ -43,6 +45,7 @@ function MetricSelect({ value, onChange, color }: { value: string; onChange: (v:
 }
 
 export default function MetricCompareChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("the metric comparison", TIP_METRIC_COMPARE);
   const [rows, setRows] = useState<TrendRow[]>([]);
   const [days, setDays] = useState<TrendDays>(14);
   const [metricA, setMetricA] = useState("hrv");
@@ -110,13 +113,16 @@ export default function MetricCompareChart({ date, refreshKey }: { date: string;
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap justify-end min-w-0">
           <MetricSelect value={metricA} onChange={setMetricA} color={A_COLOR} />
           <span className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>vs</span>
           <MetricSelect value={metricB} onChange={setMetricB} color={B_COLOR} />
           <TrendRangeToggle value={days} onChange={setDays} />
+          {tip.button}
         </div>
       </div>
+
+      {tip.panel}
 
       {loaded && (A.p.length > 1 || B.p.length > 1) ? (
         <div className="px-5 pt-3 pb-1">

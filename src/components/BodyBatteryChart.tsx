@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconBattery } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_BODY_BATTERY } from "@/lib/widgetTips";
 
 interface BatteryRow {
   date: string;
@@ -23,6 +25,7 @@ function batteryColor(v: number): string {
 // Body Battery trend — band between daily low and high, from cached Garmin
 // data only (no live Garmin calls). Window selectable: 7 / 14 / 30 days.
 export default function BodyBatteryChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Body Battery", TIP_BODY_BATTERY);
   const [rows, setRows] = useState<BatteryRow[]>([]);
   const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
@@ -91,8 +94,11 @@ export default function BodyBatteryChart({ date, refreshKey }: { date: string; r
             </p>
           </div>
         )}
+        {tip.button}
         </div>
       </div>
+
+      {tip.panel}
 
       {n > 1 ? (
         <div className="px-5 pt-3 pb-1">

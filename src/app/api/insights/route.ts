@@ -6,13 +6,14 @@ import { getAllSupplements, getTakenDatesBySupplement } from "@/lib/supplements"
 import { getTagDatesInRange, JOURNAL_TAGS } from "@/lib/journal";
 import { buildSnapshots, shiftDate, dateRange } from "@/lib/summary/snapshots";
 import { computeCorrelations, type CorrelationFactor, type FactorCorrelation } from "@/lib/correlations";
+import { getWorkoutFactors } from "@/lib/training";
 import { readJson, writeJson } from "@/lib/storage";
 
 // ── Correlation insights ──────────────────────────────────────────────────────
 // GET /api/insights?date=YYYY-MM-DD[&force=1]
 //
 // Deterministic factor-day vs non-factor-day comparisons (lib/correlations.ts) over
-// the last 30 days — supplements AND journaled behaviors — narrated by Claude
+// the last 30 days — supplements, journaled behaviors AND training sessions — narrated by Claude
 // (Gemini fallback). The numbers are computed in code; the model only comments on
 // them. Cached per date, invalidated by data hash.
 
@@ -37,8 +38,9 @@ const NARRATION_SCHEMA = {
 };
 
 const NARRATION_SYSTEM = `You are a data-grounded health coach. You are given a table of
-deterministic correlations between a user's daily factors — supplement intake AND journaled
-behaviors (alcohol, sauna, late caffeine, …) — and next-day recovery metrics (each factor day
+deterministic correlations between a user's daily factors — supplement intake, journaled
+behaviors (alcohol, sauna, late caffeine, …) AND training sessions (any workout, specific
+activity types, hard days, evening sessions) — and next-day recovery metrics (each factor day
 is compared against the FOLLOWING day's sleep/HRV/stress/resting-HR/Body-Battery).
 
 Rules:
@@ -47,6 +49,10 @@ Rules:
   direction, reasonable sample sizes). Small deltas or tiny samples → say the data is inconclusive.
 - Behaviors marked [behavior] are lifestyle choices, not supplements — phrase advice accordingly
   (e.g. "alcohol nights cost you X sleep-score points on average").
+- Factors marked [training] are workouts. A recovery cost after hard training is NORMAL and
+  expected — read those rows as "what this session costs me overnight" (and whether the cost is
+  proportionate), never as a reason to stop training. Timing findings (e.g. evening sessions
+  costing sleep score) are the actionable ones.
 - Always note that these are correlations, not proof of causation.
 - "suggestions": 1-3 concrete self-experiments, e.g. "2 weeks on / 2 weeks off Glycine, then
   compare average sleep score" or "skip late caffeine for 2 weeks and compare deep sleep".
@@ -138,14 +144,16 @@ export async function GET(req: Request) {
 
   const dates = dateRange(shiftDate(date, -(WINDOW_DAYS - 1)), date);
 
-  const [supplements, takenMap, tagDates, profile] = await Promise.all([
+  const [supplements, takenMap, tagDates, profile, workoutFactors] = await Promise.all([
     getAllSupplements(),
     getTakenDatesBySupplement(dates),
     getTagDatesInRange(dates),
     loadProfile(),
+    getWorkoutFactors(dates),
   ]);
 
-  // Factors = supplements (dose days) + journaled behaviors (tag days)
+  // Factors = supplements (dose days) + journaled behaviors (tag days) + training
+  // sessions (workout days, by type / intensity / time of day)
   const factors: CorrelationFactor[] = [
     ...supplements.map((s) => ({
       id: s.id,
@@ -162,6 +170,7 @@ export async function GET(req: Request) {
         kind: "behavior" as const,
         dates: tagDates[t.id],
       })),
+    ...workoutFactors,
   ];
 
   // Food data isn't part of the correlation set — pass no entries to skip that read

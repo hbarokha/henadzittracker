@@ -129,6 +129,17 @@ the official developer program is currently suspended as of 2024).
 - Dedicated **Supplement Analysis** section: stack assessment (incl. per-supplement total-daily-dose adequacy vs safe upper limits), adherence insights, gaps (data-grounded, ingredient-level dedup vs combo products), timing tips (absorption competition + fat-soluble pairing), interactions incl. cross-product nutrient overlaps with cumulative totals
 - All available data is fed to Gemini: profile (age/sex/weight/BMR/TDEE), VO2 max, body composition, sleep stages + HRV status + 5-day avg HRV, training readiness score, acute/chronic training load, SpO2, respiration rate, intensity minutes vs WHO targets, full workout details (HR, distance, training effect, training load, PRs), body battery charged/drained, stress rest%, supplement adherence rates, weight trend, 7-day nutrition averages
 
+### Training
+- Dedicated **Training tab** — the AI train-today-or-rest verdict sits at the top (moved out of the AI health analysis: the recommendation belongs next to the load data it reasons about), followed by the deterministic picture behind it. `TrainingRecommendationCard` reads the ALREADY-generated summary via cache-only `GET /api/ai/summary/cached` so opening the tab never starts a 70-second AI run; when nothing is cached it offers an explicit "Get verdict" button
+- **Every widget explains itself** — an ⓘ in each card header (`InfoTip.tsx`, copy in `lib/widgetTips.ts`) opens a panel covering what the widget shows, **how the number is calculated**, how to read its bands, and the caveat that would make it wrong or missing. Each tip is written against the code that produces the number and says which of the three kinds of claim it is — the watch's own figure, computed here in code, or a language model's estimate
+- **Fatigue & load balance** (`FatigueCard`) — ACWR, weekly load with ramp %, and Foster **monotony** (mean daily load ÷ SD) and **strain** (weekly load × monotony), computed in `lib/training.ts` from the daily load series, never by the AI. Warnings fire on real thresholds: ACWR > 1.5, monotony > 2.0, a >50% week-over-week jump
+- **Value labels on every chart** — each series carries ▲ its maximum, ▼ its minimum and its current value directly on the plot (`ExtremeLabels` + a `now` label in the series color), so the numbers that matter are readable without hovering. All of them wear a knockout halo so they stay legible over a gridline or a bar. Where the axis auto-scale compresses gridlines into each other — one ACWR spike squashes the 0.8/1.3/1.5 lines together — every line still draws but a label landing within 7px of the previous one is dropped, since three numbers printed on top of each other are worth less than two and a gap
+- **Training load & ACWR chart** — two stacked panels sharing one x-axis: ratio line with the 0.8–1.3 sweet spot shaded on top, daily load bars below. Garmin's own `loadRatio` is used when present; otherwise a 7d:28d rolling ratio computed from per-activity load fills in (the route loads 28 extra days of history so day 1 of the window has a real chronic base), and every row is tagged which it is — a derived number is never shown as if the watch reported it
+- **Readiness trend** and **VO2 max / fitness age** charts from the same cached rows; the VO2 panel is zoomed to the observed range (a 1-point change matters) with the chronological age drawn as a reference line
+- **Weekly volume** — sessions, load, duration, distance and intensity minutes vs the WHO targets (150 moderate / 75 vigorous) per Monday-anchored week, with a per-type breakdown; partial weeks are labeled so half a week is never read as a bad week
+- **Activity list with local renames** — every session in the window, newest first, with the full metric chips and CSV export. Garmin names sessions after the device profile ("Padel", "Strength"), so ✎ opens an inline rename that **proposes names already in use** — previously-typed names for that same activity type first, then other past names, then the Garmin names in the window. Renames are an overlay keyed by `activityId` in `data/activity-names.json`: the cached activity is never rewritten, so a re-sync can't clobber a rename and clearing one always restores the Garmin name
+- **Training ↔ recovery correlations** — the correlation engine's factors extend beyond supplements and behaviors to training (`kind: "workout"`): any training day, each activity type, hard sessions (split at the median daily load), and evening sessions after 18:00, each compared against the FOLLOWING day's sleep/HRV/stress/resting-HR/Body-Battery. Rendered on the Training tab via a `kinds` filter on the shared `CorrelationInsights` card, and included in the Overview card and the AI narration
+
 ### Correlation Insights
 - Deterministic supplement ↔ recovery correlations over the last 30 days (`lib/correlations.ts`): each supplement's dose days vs non-dose days, compared on the **following day's** sleep score, deep sleep, sleep duration, HRV, stress, resting HR, and Body Battery recharge (a date's sleep/HRV caches describe the night that ended that morning, so day-D doses map to D+1 metrics)
 - Requires ≥4 dose days and ≥4 non-dose days per supplement/metric; numbers are computed in code — the AI never invents them
@@ -138,7 +149,7 @@ the official developer program is currently suspended as of 2024).
 ### Trend Charts
 - **Selectable window** — every Garmin trend chart (Sleep, Body Battery, Stress, Blood Pressure) has a shared 7D / 14D / 1M segmented control (`TrendRangeToggle.tsx`) in its header; defaults: 14 days (BP: 30)
 - **Sleep trend** — `GET /api/garmin/sleep/trend?date=…&days=…` reads only the per-date `sleep` cache files (never calls Garmin); Overview card with two stacked panels sharing one x-axis (never dual-axis): sleep-score line (violet, 60/80 band reference lines) on top, duration bars (sky, 8 h reference line) below; header shows latest score + hours with Garmin score-band coloring, deep/REM minutes of the latest night
-- **Biological-age trend** — every AI health summary upserts that day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`, ETag-safe `mutateJson`); `GET /api/bioage?days=90`; purple line chart on Overview showing latest estimate, delta vs chronological age, and change across recorded checks
+- **Biological-age trend** (the card's ⓘ explains the estimate from the user's OWN readings — the cited VO2 max, resting HR, HRV and blood-pressure values that moved it, what confidence means, and the single biggest lever — rather than describing the model) — every AI health summary upserts that day's bio-age estimate into `bioage-history.json` (`lib/bioage.ts`, ETag-safe `mutateJson`); `GET /api/bioage?days=90`; purple line chart on Overview showing latest estimate, delta vs chronological age, and change across recorded checks
 - **Body Battery trend** — `GET /api/garmin/bodybattery/trend?date=…&days=…` reads only the per-date Garmin cache files (never calls Garmin); Overview band chart between each day's low and high with charged/drained in the header
 - **Blood pressure trend** — `GET /api/garmin/bloodpressure/trend?date=…&days=…` reads only the per-date `bloodpressure` cache files (never calls Garmin); Overview line chart plotting systolic + diastolic (days without a reading omitted, since BP is measured sparsely), latest reading with ACC/AHA category badge and pulse in the header
 
@@ -241,7 +252,9 @@ src/
         bloodpressure/trend/route.ts GET — BP trend (systolic/diastolic/pulse) from cached files only (no Garmin calls)
         sleep/trend/route.ts        GET — sleep score + duration trend from cached files only (no Garmin calls)
       labs/route.ts                 GET/POST/DELETE — blood work panels + latest value per marker
-      insights/route.ts             GET — deterministic supplement↔recovery correlations + Claude narration (Gemini fallback), cached per date
+      insights/route.ts             GET — deterministic factor↔recovery correlations (supplements, behaviors, training) + Claude narration (Gemini fallback), cached per date
+      training/route.ts             GET — training window: daily load/readiness/VO2 rows, activities with renames, weekly rollups, fatigue stats (cache-only)
+      training/rename/route.ts      GET/POST — activity rename overrides + the rename vocabulary
       bioage/route.ts               GET — biological-age history recorded by the AI summary
       ai/
         text/route.ts               POST — text → nutrition (Gemini)
@@ -253,7 +266,7 @@ src/
         labs/route.ts               POST — lab report photo/PDF → Gemini transcription into known markers
     globals.css
     layout.tsx
-    page.tsx                        3-tab SPA: Overview / Nutrition / Supplements; date nav, goals, streak, TabBar
+    page.tsx                        5-tab SPA: Overview / Nutrition / Training / Supplements / Analysis; date nav, goals, streak, TabBar
   components/
     DailySummary.tsx                Ring + calorie bar + macro cards; compact={true} mode for Overview tab
     WeeklyChart.tsx                 7-day SVG bar chart with goal line
@@ -275,7 +288,17 @@ src/
     StressChart.tsx                 Stress trend chart (cache-only trend route, 7D/14D/1M)
     BloodPressureChart.tsx          Systolic/diastolic line chart with ACC/AHA category badge (cache-only trend route, 7D/14D/1M)
     TrendRangeToggle.tsx            Shared 7D / 14D / 1M segmented control for the trend charts
-    CorrelationInsights.tsx         Supplement↔recovery correlation card — AI narrative + per-metric delta chips
+    InfoTip.tsx                     Shared widget explanation affordance — ⓘ in a card header toggles a what/how-it's-calculated/how-to-read-it/caveat panel (a toggle, not a hover tooltip: this app is used on a phone)
+    CorrelationInsights.tsx         Factor↔recovery correlation card — AI narrative + per-metric delta chips; optional `kinds` filter (the Training tab renders only workout rows)
+    TrainingTab.tsx                 Training tab — verdict, load/readiness/VO2 charts, fatigue, weekly volume, activities, training correlations
+    training/TrainingCard.tsx       AI train-today-or-rest verdict card (extracted from HealthSummaryPanel)
+    training/TrainingRecommendationCard.tsx  Verdict wrapper — reads the cached summary, explicit generate/regenerate
+    training/TrainingLoadChart.tsx  ACWR line over the 0.8–1.3 band + daily load bars, stacked panels
+    training/ReadinessChart.tsx     Garmin training-readiness trend with its score bands
+    training/Vo2MaxChart.tsx        VO2 max (running/cycling) + fitness age vs chronological age
+    training/FatigueCard.tsx        ACWR / weekly load + ramp / Foster monotony + strain, with threshold warnings
+    training/WeeklyLoadSummary.tsx  Per-week sessions, load, intensity minutes vs WHO targets, per-type chips
+    training/WorkoutHistory.tsx     Activity list with inline rename (history-backed suggestions) + CSV export
     LabResults.tsx                  Blood work card — manual entry + photo/PDF AI transcription, flagged markers first, panel history
     supplements/MissingLabelsCard.tsx  Nudge for products with no recorded label — per-product or bulk grounded lookup, saved only on user accept
     HealthChat.tsx                  Chat panel over the user's own health data (Claude tool use)
@@ -290,13 +313,16 @@ src/
     profile.ts                      UserProfile interface + BMR/TDEE calculations
     garmin.ts                       Session client + all typed fetch helpers + interfaces
     supplements.ts                  Supplement types + blob/file persistence helpers + getAdherenceForRange() + getTakenDatesBySupplement() + getSupplementHistory()/applyWeeklyPlan() (weekly planner)
-    correlations.ts                 Deterministic dose-day vs next-day metric correlation engine (min 4 days per group)
+    correlations.ts                 Deterministic factor-day vs next-day metric correlation engine (supplements / behaviors / workouts, min 4 days per group)
+    training.ts                     Training window aggregation (cache-only) — daily load, rolling ACWR, weekly rollups, Foster monotony/strain, workout correlation factors
+    activityNames.ts                Activity rename overrides + the rename vocabulary (data/activity-names.json)
     bioage.ts                       Biological-age history — recordBioAge() upsert + getBioAgeHistory()
     weight-db.ts                    Body weight blob/file persistence helpers
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
     heartbeat.ts                    heartbeatJson() — streams whitespace every 5s so long AI routes survive Azure SWA's ~45s gateway kill
     ingredientLookup.ts             lookupIngredients() — Claude + web_search server tool reads a branded product's label panel off a cited page; no source ⇒ no ingredients
     ingredientLedger.ts             Parses recorded label panels into per-nutrient daily totals (formatIngredientLedger + TOP_UP_RULES) so the AI doses on top of what the stack already supplies; needsLabel() drives the missing-label nudge
+    widgetTips.ts                   Every widget's explanation copy, written against the code that produces each number; `bioAgeTip(data)` builds the biological-age tip from the user's own cited readings
     timeOfDay.ts                    TimeOfDay slots — single source of truth for type, order, labels/icons/colors, validation and AI prompt wording (client-safe, no storage imports)
     schedule.ts                     Dosing schedules (daily / weekdays / every-N-days / on-off cycle) — isScheduledOn, countScheduledDays, describeSchedule (client-safe)
     labs-catalog.ts                 Biomarker catalog, unit conversion, range interpretation, formatLabsForPrompt (client-safe)
@@ -333,6 +359,7 @@ data/
     YYYY-MM-DD.json                 Cached correlation insights per date — invalidated when the correlation table's hash changes
   bioage-history.json               One bio-age estimate per analyzed date — upserted by the AI summary, read by the trend chart
   weight.json                       Body weight log (git-ignored)
+  activity-names.json               Local activity rename overrides + names used before (git-ignored)
   labs.json                         Blood work panels — value + unit exactly as reported (git-ignored)
 staticwebapp.config.json              Azure SWA platform config (Node 20 runtime)
 swa-cli.config.json                   Azure SWA CLI config (points to Next.js build)
@@ -585,6 +612,8 @@ Activity multipliers:
 
 ## Next steps
 
+- [x] **Widget explanations + UI/UX review pass (2026-08-30)** — the app renders a lot of numbers that took a non-obvious path to get there (a Foster monotony score, a rolling 7:28 load ratio, a bio-age estimate), and nothing on screen said how any of them were derived or what moved them; "ACWR" appeared as a bare four-letter label. New `InfoTip.tsx` (`useInfoTip(label, content)` → a 28px ⓘ in the card header toggling a panel with **what it shows / How it's calculated / How to read it / Caveat**) and `lib/widgetTips.ts`, which holds every tip's copy in one place, written against the code that produces each number rather than from general knowledge about the metric — so each tip names the real inputs and arithmetic and distinguishes the three kinds of claim in this app: the device's own number, a figure computed here in code, and a language model's estimate. A toggle rather than a hover tooltip, because the app is used on a phone. Wired into 18 widgets across Training, Overview and the Analysis panel. **Biological age** gets a data-driven tip (`bioAgeTip(data)`, a function rather than a constant) that answers "why does it say 48?" with the user's OWN readings — each cited factor as its own bullet, the confidence in plain words, the biggest lever — instead of describing the machinery; **fitness age** names the four inputs Garmin actually derives it from (chronological age, VO2 max, weekly vigorous minutes, body fat % or BMI). Fixed along the way: the **mobile tab bar collided** — at 390px each tab cell measured exactly its own label width, so the five labels butted together with zero gap and pushed the page into horizontal scroll (now a smaller mobile type size plus a `short` label, "Stack", the app's own word for the supplement set); a **second parallel palette** had grown up in the newer components, which used Tailwind's sky-400/emerald-400/red-400/amber-400 next to MERIDIAN's `--sky`/`--sage`/`--coral`/`--amber` and sometimes mixed both inside one badge — the tell was that `--coral-dim`, `--mint-dim`, `--sky-dim` and `--violet-dim` were defined and never used, so six `--*-edge` border tokens were added (`--amber-glow` had been the only one) and the hand-rolled rgba replaced; `bg-gray-600`, `bg-gray-400` and `border-gray-500` had no warm-dark override while their neighbours did, and since they are used almost entirely as `:hover` states, buttons flipped from warm to cold blue-gray on hover; the bio-age delta never pluralized ("1 years younger"); and `FatigueCard` at zero load showed four em-dashes with no explanation, while `WeeklyLoadSummary` said only "No weeks in this window." Verified at 1440×900 and 390×844 with zero console errors and zero warnings, `tsc --noEmit` clean, `npm run build` clean, and every `var(--…)` in `src/` resolving against `globals.css`
+- [x] **Training tab (2026-08-30)** — training data was scattered between Garmin dashboard cards and one AI verdict buried in the health analysis, with no way to see load history at all. New tab backed by `lib/training.ts` (cache-only window aggregation: daily load, weekly rollups, Monday-anchored weeks, Foster monotony/strain) and `GET /api/training`. The acute:chronic ratio is Garmin's where Garmin reports one and a 7d:28d rolling computation from per-activity load where it doesn't — this account's `trainingstatus` cache returns null readiness and null load ratio for every day, so without the computed fallback the whole load picture would have been empty. Every row says which source it came from. The AI train-today-or-rest verdict moved here from `HealthSummaryPanel` and now reads a cache-only `GET /api/ai/summary/cached`, so opening the tab can never trigger a 70-second generation behind the user's back. Activities gained local renames (`data/activity-names.json`, keyed by Garmin `activityId` so a re-sync can't clobber them) with suggestions drawn from names already used — same-type first. The correlation engine gained `kind: "workout"` factors (any training day, per activity type, hard days at the median load, evening sessions), which immediately produced five real comparisons on 30 days of data
 - [ ] **Adaptive TDEE (MacroFactor-style)** — deterministic engine comparing logged intake vs weight trend over rolling 2–3 weeks to compute true TDEE and auto-adjust the calorie goal weekly toward the health goal
 - [x] **Lab results with AI extraction (InsideTracker-style)** — photo/PDF of a lab report → Gemini extracts biomarkers → per-panel storage + flagged-marker card + fed into the bio-age, supplement and chat prompts (see the Blood Work section); per-marker trend charts still to come
 - [ ] **Editable coach memory (Whoop "My Memory"-style)** — user-editable coach notes (injuries, dietary restrictions, schedule constraints) injected into every AI prompt

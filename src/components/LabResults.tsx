@@ -6,6 +6,8 @@ import {
   BIOMARKERS, BIOMARKERS_BY_KEY, LAB_CATEGORY_LABELS, describeRange,
   type LabCategory, type LabPanel, type LatestMarker, type MarkerStatus,
 } from "@/lib/labs-catalog";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_LABS } from "@/lib/widgetTips";
 
 const STATUS_COLOR: Record<MarkerStatus, string> = {
   optimal: "var(--sage)",
@@ -37,6 +39,7 @@ type Draft = Record<string, { value: string; unit: string }>;
  * summary (biological age, concerns) and supplement dosing.
  */
 export default function LabResults() {
+  const tip = useInfoTip("Blood work", TIP_LABS);
   const [panels, setPanels] = useState<LabPanel[]>([]);
   const [latest, setLatest] = useState<LatestMarker[]>([]);
   const [loading, setLoading] = useState(true);
@@ -201,14 +204,19 @@ export default function LabResults() {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         <button onClick={() => (adding ? resetAdd() : setAdding(true))}
           className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
           style={adding
-            ? { background: "rgba(255,107,107,0.1)", color: "var(--coral)", border: "1px solid rgba(255,107,107,0.25)" }
-            : { background: "rgba(56,189,248,0.1)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.2)" }}>
+            ? { background: "var(--coral-dim)", color: "var(--coral)", border: "1px solid var(--coral-edge)" }
+            : { background: "var(--sky-dim)", color: "var(--sky)", border: "1px solid var(--sky-edge)" }}>
           {adding ? "Cancel" : "+ Add results"}
         </button>
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       {loading && (
         <div className="loading-bar-track"><div className="loading-bar-fill" style={{ background: "#38bdf8" }} /></div>

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { IconBeaker } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_CORRELATIONS } from "@/lib/widgetTips";
 
 interface MetricCorrelation {
   metric: string;
@@ -15,10 +17,17 @@ interface MetricCorrelation {
   notTakenDays: number;
 }
 
+type FactorKind = "supplement" | "behavior" | "workout";
+
+const KIND_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  behavior: { label: "behavior", color: "var(--sky)",  bg: "rgba(56,189,248,0.1)",  border: "rgba(56,189,248,0.2)" },
+  workout:  { label: "training", color: "var(--amber)", bg: "rgba(245,166,35,0.12)", border: "rgba(245,166,35,0.25)" },
+};
+
 interface FactorCorrelation {
   factorId: string;
   name: string;
-  kind?: "supplement" | "behavior";
+  kind?: FactorKind;
   doseDays: number;
   nonDoseDays: number;
   metrics: MetricCorrelation[];
@@ -31,10 +40,19 @@ interface InsightsData {
   generatedAt: string;
 }
 
-export default function CorrelationInsights({ date }: { date: string }) {
+export default function CorrelationInsights({
+  date, kinds, title = "Correlations", subtitle,
+}: {
+  date: string;
+  /** Show only these factor kinds — the Training tab renders just the workout rows */
+  kinds?: FactorKind[];
+  title?: string;
+  subtitle?: string;
+}) {
   const [data, setData] = useState<InsightsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const tip = useInfoTip("these correlations", TIP_CORRELATIONS);
 
   const load = useCallback(async (force = false) => {
     setLoading(true);
@@ -58,6 +76,13 @@ export default function CorrelationInsights({ date }: { date: string }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // The narration always covers every factor; when a kind filter is active the
+  // narrative would talk about rows that aren't on screen, so it's hidden there.
+  const shown = data
+    ? kinds ? data.correlations.filter((c) => c.kind && kinds.includes(c.kind)) : data.correlations
+    : [];
+  const filtered = !!kinds;
+
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       {/* Header */}
@@ -66,36 +91,42 @@ export default function CorrelationInsights({ date }: { date: string }) {
           <IconBeaker style={{ color: "var(--mint)" }} />
           <div>
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
-              Correlations
+              {title}
             </h3>
             <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
-              supplements &amp; behaviors vs next-day recovery · last 30 days
+              {subtitle ?? "supplements, behaviors & training vs next-day recovery · last 30 days"}
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         <button
           onClick={() => load(true)}
           disabled={loading}
           className="w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-40"
           style={{ background: "var(--bg-raised)", color: "var(--text-muted)", border: "1px solid var(--border-mid)" }}
           title="Recompute"
+          aria-label="Recompute correlations"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
         </button>
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       {loading && (
         <div className="loading-bar-track">
-          <div className="loading-bar-fill" style={{ background: "#a78bfa" }} />
+          <div className="loading-bar-fill" style={{ background: "var(--violet)" }} />
         </div>
       )}
 
       {error && (
         <div className="px-5 py-3 flex items-center justify-between gap-3"
-          style={{ background: "rgba(255,107,107,0.08)", borderBottom: "1px solid rgba(255,107,107,0.25)" }}>
-          <p className="text-xs" style={{ color: "#f87171" }}>{error}</p>
+          style={{ background: "var(--coral-dim)", borderBottom: "1px solid var(--coral-edge)" }}>
+          <p className="text-xs" style={{ color: "var(--coral)" }}>{error}</p>
           <button onClick={() => load()} className="text-xs font-semibold shrink-0 px-2 py-1 rounded-md"
             style={{ color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
             Retry
@@ -104,16 +135,16 @@ export default function CorrelationInsights({ date }: { date: string }) {
       )}
 
       <div className="px-5 py-4 space-y-4" style={{ opacity: loading && data ? 0.45 : 1 }}>
-        {data && !data.correlations.length && !loading && (
+        {data && !shown.length && !loading && (
           <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-            Not enough data yet — correlations need at least 4 on-days and 4 off-days per
-            supplement or journal tag in the last 30 days. Keep checking off supplements
-            and logging daily behaviors in the journal.
+            {filtered
+              ? "Not enough training data yet — a comparison needs at least 4 days with that kind of session and 4 without, in the last 30 days."
+              : "Not enough data yet — correlations need at least 4 on-days and 4 off-days per supplement or journal tag in the last 30 days. Keep checking off supplements and logging daily behaviors in the journal."}
           </p>
         )}
 
         {/* AI narrative */}
-        {data?.narrative && (
+        {data?.narrative && !filtered && (
           <div className="rounded-lg px-3 py-2.5 space-y-2"
             style={{ background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.18)" }}>
             <p className="text-[10px] font-semibold uppercase tracking-wide"
@@ -135,15 +166,20 @@ export default function CorrelationInsights({ date }: { date: string }) {
         )}
 
         {/* Deterministic table */}
-        {data?.correlations.map((c) => (
+        {shown.map((c) => (
           <div key={c.factorId} className="space-y-1.5">
             <div className="flex items-baseline justify-between">
               <p className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--text)" }}>
                 {c.name}
-                {c.kind === "behavior" && (
+                {c.kind && KIND_BADGE[c.kind] && !filtered && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded font-medium uppercase tracking-wide"
-                    style={{ color: "var(--sky)", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", fontFamily: "var(--font-mono)" }}>
-                    behavior
+                    style={{
+                      color: KIND_BADGE[c.kind].color,
+                      background: KIND_BADGE[c.kind].bg,
+                      border: `1px solid ${KIND_BADGE[c.kind].border}`,
+                      fontFamily: "var(--font-mono)",
+                    }}>
+                    {KIND_BADGE[c.kind].label}
                   </span>
                 )}
               </p>
@@ -174,10 +210,10 @@ export default function CorrelationInsights({ date }: { date: string }) {
           </div>
         ))}
 
-        {data && data.correlations.length > 0 && (
+        {shown.length > 0 && (
           <p className="text-[10px] leading-snug" style={{ color: "var(--text-dim)" }}>
-            Correlation, not causation — each chip compares the average on the day after a dose
-            vs the day after a skipped day. Hover a chip for the underlying averages.
+            Correlation, not causation — each chip compares the average on the day after the
+            factor happened vs the day after it didn&apos;t. Hover a chip for the underlying averages.
           </p>
         )}
       </div>

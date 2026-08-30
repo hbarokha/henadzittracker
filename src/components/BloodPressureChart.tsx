@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconHeartPulse } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_BLOOD_PRESSURE } from "@/lib/widgetTips";
 
 interface BPRow {
   date: string;
@@ -24,6 +26,7 @@ function bpCategory(sys: number, dia: number): { label: string; color: string } 
 // Blood-pressure history from cached Garmin readings (no live calls). BP is measured
 // sparsely, so the window defaults to 30 days and days without a reading are omitted.
 export default function BloodPressureChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Blood pressure", TIP_BLOOD_PRESSURE);
   const [rows, setRows] = useState<BPRow[]>([]);
   const [days, setDays] = useState<TrendDays>(30);
   const [loaded, setLoaded] = useState(false);
@@ -84,8 +87,11 @@ export default function BloodPressureChart({ date, refreshKey }: { date: string;
             </p>
           </div>
         )}
+        {tip.button}
         </div>
       </div>
+
+      {tip.panel}
 
       {n > 1 ? (
         <div className="px-5 pt-3 pb-1">

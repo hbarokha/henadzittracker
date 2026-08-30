@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconDna } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_BIO_AGE_CHART } from "@/lib/widgetTips";
 
 interface BioAgeEntry {
   date: string;
@@ -14,6 +16,7 @@ interface BioAgeEntry {
 // Biological-age trend — the single number the health goal is optimizing for.
 // Fed by the AI health summary, which upserts one estimate per analyzed date.
 export default function BioAgeChart() {
+  const tip = useInfoTip("the biological age trend", TIP_BIO_AGE_CHART);
   const [entries, setEntries] = useState<BioAgeEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -49,7 +52,7 @@ export default function BioAgeChart() {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "var(--bg-surface)", border: "1px solid var(--border)" }}>
       <div className="px-5 py-4 flex items-center justify-between" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <IconDna style={{ color: "var(--violet)" }} />
           <div>
             <h3 className="text-sm font-bold" style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}>
@@ -62,6 +65,7 @@ export default function BioAgeChart() {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         {trend != null && (
           <span className="text-[10px] px-2 py-1 rounded-md font-medium"
             style={{
@@ -73,13 +77,17 @@ export default function BioAgeChart() {
             {trend > 0 ? "+" : ""}{trend} yrs / {entries.length} checks
           </span>
         )}
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       {/* Hero number — always shown once we have any estimate, so the card is never blank */}
       {latest ? (
         <div className="px-5 pt-4 pb-1">
           <div className="flex items-end gap-2">
-            <span className="text-5xl leading-none" style={{ fontFamily: "var(--font-hero)", color: "#a78bfa" }}>
+            <span className="text-5xl leading-none" style={{ fontFamily: "var(--font-hero)", color: "var(--violet)" }}>
               {latest.estimate}
             </span>
             <span className="text-sm leading-none mb-1.5" style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>

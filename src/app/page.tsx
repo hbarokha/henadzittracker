@@ -26,12 +26,13 @@ import JournalCard     from "@/components/JournalCard";
 import MicrosPanel     from "@/components/MicrosPanel";
 import ResilienceCard  from "@/components/ResilienceCard";
 import MetricCompareChart from "@/components/MetricCompareChart";
+import TrainingTab      from "@/components/TrainingTab";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
 import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
 import { IconFlame, IconBolt } from "@/components/icons";
 
-type AppTab = "overview" | "nutrition" | "supplements" | "analysis";
+type AppTab = "overview" | "nutrition" | "training" | "supplements" | "analysis";
 
 function isoToday() {
   const d = new Date();
@@ -93,6 +94,15 @@ function IconSupplements() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+    </svg>
+  );
+}
+
+function IconTraining() {
+  // Dumbbell — training load, sessions and readiness
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.5 6.5v11m-3-8.5v6m14-8.5v11m3-8.5v6M6.5 12h11" />
     </svg>
   );
 }
@@ -199,11 +209,17 @@ function IconBtn({
 
 // ── Tab Bar ───────────────────────────────────────────────────────────────────
 function TabBar({ active, onChange }: { active: AppTab; onChange: (t: AppTab) => void }) {
-  const tabs: { id: AppTab; label: string; icon: React.ReactNode }[] = [
-    { id: "overview",     label: "Overview",     icon: <IconOverview /> },
-    { id: "nutrition",    label: "Nutrition",     icon: <IconNutrition /> },
-    { id: "supplements",  label: "Supplements",   icon: <IconSupplements /> },
-    { id: "analysis",     label: "Analysis",      icon: <IconAnalysis /> },
+  // `short` is the label used below the sm breakpoint. At 390px the five full
+  // labels measured exactly as wide as their own flex cells, so they collided
+  // edge-to-edge with no gap and pushed the page 2px into horizontal scroll.
+  // "Stack" is what the app calls the supplement set everywhere else, so the
+  // short form is the domain word rather than a truncation.
+  const tabs: { id: AppTab; label: string; short?: string; icon: React.ReactNode }[] = [
+    { id: "overview",     label: "Overview",                     icon: <IconOverview /> },
+    { id: "nutrition",    label: "Nutrition",                    icon: <IconNutrition /> },
+    { id: "training",     label: "Training",                     icon: <IconTraining /> },
+    { id: "supplements",  label: "Supplements", short: "Stack",  icon: <IconSupplements /> },
+    { id: "analysis",     label: "Analysis",                     icon: <IconAnalysis /> },
   ];
 
   return (
@@ -217,7 +233,8 @@ function TabBar({ active, onChange }: { active: AppTab; onChange: (t: AppTab) =>
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 sm:py-0 sm:h-11 text-xs font-semibold transition-all duration-200 relative"
+            className="flex-1 min-w-0 px-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 sm:py-0 sm:h-11 text-[10px] sm:text-xs font-semibold transition-all duration-200 relative"
+            aria-current={isActive ? "page" : undefined}
             style={{
               color: isActive ? "var(--amber)" : "var(--text-muted)",
               fontFamily: "var(--font-display)",
@@ -225,7 +242,8 @@ function TabBar({ active, onChange }: { active: AppTab; onChange: (t: AppTab) =>
             }}
           >
             <span style={{ opacity: isActive ? 1 : 0.7 }}>{tab.icon}</span>
-            <span>{tab.label.toUpperCase()}</span>
+            <span className="sm:hidden">{(tab.short ?? tab.label).toUpperCase()}</span>
+            <span className="hidden sm:inline">{tab.label.toUpperCase()}</span>
             {/* Active underline */}
             <span
               className="absolute bottom-0 left-0 right-0 h-[2px] transition-all duration-300"
@@ -640,6 +658,11 @@ export default function Home() {
               <LabResults />
             </CollapsibleSection>
           </div>
+        )}
+
+        {/* ── TRAINING ──────────────────────────────────────────────────── */}
+        {activeTab === "training" && (
+          <TrainingTab date={selectedDate} goals={goals} />
         )}
 
         {/* ── ANALYSIS (AI) ─────────────────────────────────────────────── */}

@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { IconTarget } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_JOURNAL } from "@/lib/widgetTips";
 
 interface JournalTag { id: string; label: string; emoji: string }
 
@@ -9,6 +11,7 @@ interface JournalTag { id: string; label: string; emoji: string }
 // deterministic correlation engine — after ~2 weeks of logging, the Correlations
 // card shows what each behavior costs (or buys) in next-day recovery.
 export default function JournalCard({ date }: { date: string }) {
+  const tip = useInfoTip("the journal", TIP_JOURNAL);
   const [catalog, setCatalog] = useState<JournalTag[]>([]);
   const [tags, setTags] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
@@ -90,13 +93,18 @@ export default function JournalCard({ date }: { date: string }) {
             </p>
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
         {tags.size > 0 && (
           <span className="text-[10px] px-2 py-1 rounded-md tabular-nums"
             style={{ fontFamily: "var(--font-mono)", color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
             {tags.size} logged
           </span>
         )}
+          {tip.button}
+        </div>
       </div>
+
+      {tip.panel}
 
       <div className="px-5 py-4">
         {saveError && (

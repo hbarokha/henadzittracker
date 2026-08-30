@@ -3,7 +3,8 @@ import type { DaySnapshot } from "@/lib/summary/snapshots";
 // ── Deterministic factor ↔ recovery correlations ─────────────────────────────
 //
 // A "factor" is anything that either happened on a day or didn't: a supplement
-// dose, or a journaled behavior (alcohol, sauna, late caffeine, …). For each
+// dose, a journaled behavior (alcohol, sauna, late caffeine, …), or a training
+// session (any workout, a given activity type, a hard day, an evening session). For each
 // factor, days in the window are split into "factor days" and "non-factor days",
 // and each recovery metric is compared between the two groups.
 // A factor on day D is matched against the FOLLOWING day's snapshot (D+1):
@@ -14,10 +15,12 @@ import type { DaySnapshot } from "@/lib/summary/snapshots";
 // This is a correlation, not causation — the numbers are computed exactly and
 // the AI narration is only allowed to comment on them, never invent its own.
 
+export type FactorKind = "supplement" | "behavior" | "workout";
+
 export interface CorrelationFactor {
   id: string;
   name: string;
-  kind: "supplement" | "behavior";
+  kind: FactorKind;
   /** ISO date before which the factor didn't exist (supplement createdAt) — those days are excluded */
   since?: string;
   /** dates (within the window) the factor applied */
@@ -67,7 +70,7 @@ export interface MetricCorrelation {
 export interface FactorCorrelation {
   factorId: string;
   name: string;
-  kind: "supplement" | "behavior";
+  kind: FactorKind;
   doseDays: number;       // factor days in the window (before metric validity filtering)
   nonDoseDays: number;
   metrics: MetricCorrelation[];

@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import TrendRangeToggle, { trendRangeLabel, type TrendDays } from "@/components/TrendRangeToggle";
 import ExtremeLabels from "@/components/ExtremeLabels";
 import { IconMoon } from "@/components/icons";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_SLEEP_TREND } from "@/lib/widgetTips";
 
 interface SleepRow {
   date: string;
@@ -30,6 +32,7 @@ function scoreLabel(v: number): string {
 // are different scales, so they get two stacked panels sharing the same x-axis
 // (never a dual-axis chart): score line on top, duration bars below.
 export default function SleepChart({ date, refreshKey }: { date: string; refreshKey?: number }) {
+  const tip = useInfoTip("Sleep trend", TIP_SLEEP_TREND);
   const [rows, setRows] = useState<SleepRow[]>([]);
   const [days, setDays] = useState<TrendDays>(14);
   const [loaded, setLoaded] = useState(false);
@@ -99,8 +102,11 @@ export default function SleepChart({ date, refreshKey }: { date: string; refresh
               </p>
             </div>
           )}
+          {tip.button}
         </div>
       </div>
+
+      {tip.panel}
 
       {n > 1 ? (
         <div className="px-5 pt-3 pb-1">
