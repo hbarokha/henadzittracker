@@ -280,12 +280,17 @@ export async function buildTrainingWindow(date: string, days: number): Promise<T
     w.moderateMin += row.moderateMin ?? 0;
     w.vigorousMin += row.vigorousMin ?? 0;
     for (const a of raw[firstWindowIdx + idx].activities) {
-      const entry = w.byType.find((t) => t.type === a.type);
+      // Group by the user's name when they gave one. Garmin files every grappling
+      // session under "mixed_martial_arts"; someone who has split those into BJJ,
+      // Krav Maga and Kung Fu has told us they are different things, and rolling
+      // them back into one chip throws that away.
+      const key = a.renamed ? `name:${a.name.toLowerCase()}` : `type:${a.type}`;
+      const entry = w.byType.find((t) => t.type === key);
       if (entry) {
         entry.sessions += 1;
         entry.durationMin += Math.round(a.durationSeconds / 60);
       } else {
-        w.byType.push({ type: a.type, label: a.typeLabel, sessions: 1, durationMin: Math.round(a.durationSeconds / 60) });
+        w.byType.push({ type: key, label: a.renamed ? a.name : a.typeLabel, sessions: 1, durationMin: Math.round(a.durationSeconds / 60) });
       }
     }
   });
@@ -333,9 +338,10 @@ export async function buildTrainingWindow(date: string, days: number): Promise<T
   // ── type tally + rename suggestions ───────────────────────────────────────
   const typeTally = new Map<string, { type: string; label: string; sessions: number }>();
   for (const a of activities) {
-    const t = typeTally.get(a.type);
+    const key = a.renamed ? `name:${a.name.toLowerCase()}` : `type:${a.type}`;
+    const t = typeTally.get(key);
     if (t) t.sessions += 1;
-    else typeTally.set(a.type, { type: a.type, label: a.typeLabel, sessions: 1 });
+    else typeTally.set(key, { type: key, label: a.renamed ? a.name : a.typeLabel, sessions: 1 });
   }
 
   // Suggestions = names the user has typed before (most recent first), then the
@@ -366,6 +372,11 @@ export async function buildTrainingWindow(date: string, days: number): Promise<T
 // it applied to, scored against the FOLLOWING day's recovery metrics.
 
 export async function getWorkoutFactors(dates: string[]): Promise<CorrelationFactor[]> {
+  // Renames matter here more than anywhere: someone who split Garmin's single
+  // "mixed_martial_arts" type into BJJ / Krav Maga / Kung Fu is asking exactly the
+  // question this engine answers — which of them costs the most recovery.
+  const names = await getActivityNames();
+
   const perDay = await Promise.all(
     dates.map(async (d) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -374,6 +385,12 @@ export async function getWorkoutFactors(dates: string[]): Promise<CorrelationFac
       return {
         date: d,
         types: [...new Set(list.map((a) => String(a?.activityType ?? "other")))],
+        // The user's own labels for the sessions on this day, where they gave any
+        names: [...new Set(
+          list
+            .map((a) => (a?.activityId != null ? names.overrides[String(a.activityId)]?.name : undefined))
+            .filter((n): n is string => !!n)
+        )],
         load: sum(list.map((a) => Number(a?.trainingLoad ?? 0))),
         sessions: list.length,
         eveningStart: list.some((a) => (startHourOf(a?.startTimeLocal) ?? 0) >= 18),
@@ -391,8 +408,26 @@ export async function getWorkoutFactors(dates: string[]): Promise<CorrelationFac
   // One factor per activity type — "does padel cost me more recovery than lifting?"
   const typeDates = new Map<string, string[]>();
   for (const d of perDay) for (const t of d.types) typeDates.set(t, [...(typeDates.get(t) ?? []), d.date]);
+
+  // ...and one per name the user gave, which is the finer-grained question they
+  // asked for by renaming. Both are emitted: the splits are more specific but each
+  // has fewer days, and the engine's 4-days-per-group minimum will often admit the
+  // aggregate when it rejects the splits.
+  const nameDates = new Map<string, string[]>();
+  for (const d of perDay) for (const n of d.names) nameDates.set(n, [...(nameDates.get(n) ?? []), d.date]);
+
+  const sameDates = (a: string[], b: string[]) =>
+    a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
   for (const [type, ds] of typeDates) {
+    // Drop the type row when a single user name already covers exactly the same
+    // days — that is the same factor under two labels, and the user's wins.
+    const shadowed = [...nameDates.values()].some((nd) => sameDates(nd, ds));
+    if (shadowed) continue;
     factors.push({ id: `workout:type:${type}`, name: typeLabel(type), kind: "workout", dates: ds });
+  }
+  for (const [name, ds] of nameDates) {
+    factors.push({ id: `workout:name:${name.toLowerCase()}`, name, kind: "workout", dates: ds });
   }
 
   // Hard days, split at the median load of the days that had any load at all — a

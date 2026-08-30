@@ -73,3 +73,36 @@ export async function setActivityName(
 
   return result ?? EMPTY;
 }
+
+/**
+ * The display name for one activity: the user's override when one exists,
+ * otherwise whatever Garmin called it, otherwise the activity type.
+ *
+ * A rename is the whole point of the overlay — the user renamed the session
+ * because Garmin's device-profile label ("Padel", "Strength") did not say what
+ * the session actually was. Every surface that names a workout must go through
+ * here, or the rename only exists on the one screen where it was typed.
+ */
+export function resolveActivityName(
+  activity: { activityId?: number | string; activityName?: string | null; activityType?: string | null },
+  store: ActivityNameStore,
+): string {
+  const id = activity.activityId != null ? String(activity.activityId) : "";
+  const override = id ? store.overrides[id]?.name : undefined;
+  return override || activity.activityName || activity.activityType || "workout";
+}
+
+/** Returns copies with `activityName` replaced by the resolved display name. */
+export function applyActivityNames<
+  T extends { activityId?: number | string; activityName?: string | null; activityType?: string | null },
+>(activities: T[], store: ActivityNameStore): Array<T & { activityName: string; renamed: boolean }> {
+  return activities.map((a) => {
+    const id = a.activityId != null ? String(a.activityId) : "";
+    const override = id ? store.overrides[id]?.name : undefined;
+    return {
+      ...a,
+      activityName: resolveActivityName(a, store),
+      renamed: !!override,
+    };
+  });
+}

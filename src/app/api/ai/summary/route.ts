@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getActivityNames, resolveActivityName } from "@/lib/activityNames";
 import { createHash } from "crypto";
 import { getAllEntries } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
@@ -99,13 +100,17 @@ export async function POST(req: Request) {
   const weekDates  = dateRange(week7Start, today);
   const monDates   = dateRange(mon30Start, today);
 
-  const [suppLog, allEntries, profile, supplements, weightRows, labPanels] = await Promise.all([
+  const [suppLog, allEntries, profile, supplements, weightRows, labPanels, activityNames] = await Promise.all([
     getLogForDate(today), // pure read — virtual backfill, never writes
     getAllEntries(),
     loadProfile(),
     getAllSupplements(),
     getRecentWeightEntries(35),
     getLabPanels(),
+    // The user renames sessions precisely because Garmin's device-profile label
+    // ("Padel", "Strength") does not say what the session was. The model should
+    // reason and write about them under the names the user gave them.
+    getActivityNames(),
   ]);
   // Blood work is the only input that says what the body is MADE of — it anchors the
   // bio-age estimate and lets supplement advice cite measured levels.
@@ -155,7 +160,10 @@ export async function POST(req: Request) {
   // v5: blood work + schedule-aware adherence — v4 answers were blind to lab values and
   // read non-daily supplements as missed doses)
   const dataHash = createHash("sha256").update(JSON.stringify(
-    { promptVersion: 5, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp },
+    // activityNames.overrides is part of the hash: renaming a session changes what
+    // the prompt says without changing any underlying metric, so without it the
+    // cache would keep serving an analysis that still uses the old Garmin labels.
+    { promptVersion: 6, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp, activityNames: activityNames.overrides },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -190,7 +198,7 @@ export async function POST(req: Request) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const workoutLines = d.activities.map((a: any) => {
     const parts = [
-      a.activityName ?? a.activityType,
+      resolveActivityName(a, activityNames),
       `${Math.round((a.durationSeconds ?? 0) / 60)} min`,
       a.distanceMeters > 0 ? `${(a.distanceMeters / 1000).toFixed(1)} km` : null,
       a.calories ? `${a.calories} kcal` : null,
@@ -216,7 +224,7 @@ export async function POST(req: Request) {
   const dayRows = weekSnaps.map((s) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const acts = (s.activities ?? []).map((a: any) =>
-      `${a.activityType ?? "workout"}(${Math.round((a.durationSeconds ?? 0) / 60)}m)`).join("+") || "—";
+      `${resolveActivityName(a, activityNames)}(${Math.round((a.durationSeconds ?? 0) / 60)}m)`).join("+") || "—";
     const sleepStr = s.sleep?.totalSleepSeconds
       ? `${(s.sleep.totalSleepSeconds / 3600).toFixed(1)}h (score ${s.sleep.sleepScore ?? "?"})`
       : "—";

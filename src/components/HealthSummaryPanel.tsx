@@ -338,6 +338,19 @@ function BioAgeCard({ data }: { data: BiologicalAge }) {
   );
 }
 
+// `fetch` rejects with a bare TypeError("Failed to fetch") for any network-level
+// failure - the dev server restarting, a dropped connection, being offline. That
+// string alone tells the user nothing about what happened or what to do, so name
+// the likely cause and the next action.
+function describeFetchError(e: unknown): string {
+  if (e instanceof DOMException && e.name === "AbortError")
+    return "The analysis took too long and was stopped. Try again.";
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/failed to fetch|networkerror|load failed/i.test(msg))
+    return "Couldn't reach the server - it may have restarted, or the connection dropped. Try again.";
+  return msg;
+}
+
 export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, goals }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -348,47 +361,101 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
   const syncRef = useRef(onSyncGarmin);
   useEffect(() => { syncRef.current = onSyncGarmin; });
 
-  const generate = useCallback(async (force = false) => {
-    setLoading(true);
-    setError(null);
-    try {
-      if (force && syncRef.current) {
-        try { await syncRef.current(); } catch {}
-      }
-      const now = new Date();
-      const resp = await fetch("/api/ai/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          date,
-          force,
-          time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
-          // Real macro goals from the ⚙️ modal — otherwise the server only knows defaults
-          goals,
-        }),
-      });
-      const raw = await resp.text();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        // Platform gateway (e.g. Azure SWA) killed the request and returned a plain-text
-        // body instead of JSON — surface a clear message rather than the raw parse error.
-        throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
-      }
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-      // The route streams with status 200 committed up front — a failed generation
-      // arrives as {"error": ...} in the body rather than a non-2xx status.
-      if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
-      setSummary(data as HealthSummary);
+  // Same treatment for goals, but keyed on its VALUES rather than its identity.
+  // page.tsx runs `setGoals(loadGoals())` on mount, which hands down a brand-new
+  // object even when nothing actually changed. With `goals` in the dependency array
+  // that re-created `generate`, re-ran the effect below, and fired a SECOND
+  // concurrent /api/ai/summary while the first ~50s Claude generation was still in
+  // flight. Keying on the serialized values still regenerates on a real goal edit.
+  const goalsRef = useRef(goals);
+  useEffect(() => { goalsRef.current = goals; });
+  const goalsKey = JSON.stringify(goals ?? null);
+
+  // Single-flight. React StrictMode double-invokes effects in dev, and `goals`
+  // getting a new identity re-fires this in production - either way a second
+  // identical request would only duplicate a slow, billable AI call.
+  //
+  // A duplicate JOINS the request already running (it gets handed the same promise)
+  // rather than being silently dropped, so `await generate()` still resolves when
+  // the data has actually arrived instead of resolving immediately on nothing.
+  const inFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const generate = useCallback((force = false): Promise<void> => {
+    const key = `${date}|${goalsKey}`;
+    const existing = inFlightRef.current;
+    if (!force && existing?.key === key) return existing.promise;
+
+    // A forced generate (Refresh / Try again) supersedes whatever is running
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Ownership test used throughout: only the request that still holds the slot may
+    // touch shared state. A superseded request must not flip `loading` off, surface an
+    // error, or clear the guard out from under the request that replaced it.
+    const owns = () => abortRef.current === controller;
+
+    const run = async (): Promise<void> => {
+      // The route heartbeat-streams, so a stalled connection would otherwise spin forever
+      const timeout = setTimeout(() => controller.abort(), 180_000);
+      setLoading(true);
       setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [date, goals]); // date/goals trigger re-generation; onSyncGarmin accessed via ref
+      try {
+        if (force && syncRef.current) {
+          try { await syncRef.current(); } catch {}
+        }
+        const now = new Date();
+        const resp = await fetch("/api/ai/summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            date,
+            force,
+            time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+            // Real macro goals from the settings modal - otherwise the server only knows defaults
+            goals: goalsRef.current,
+          }),
+        });
+        const raw = await resp.text();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let data: any;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          // Platform gateway (e.g. Azure SWA) killed the request and returned a plain-text
+          // body instead of JSON - surface a clear message rather than the raw parse error.
+          throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out - try again");
+        }
+        if (!resp.ok) throw new Error(data.error ?? "Unknown error");
+        // The route streams with status 200 committed up front - a failed generation
+        // arrives as {"error": ...} in the body rather than a non-2xx status.
+        if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
+        if (!owns()) return;
+        setSummary(data as HealthSummary);
+        setError(null);
+      } catch (e) {
+        // A superseded or unmounted request is not a failure the user should be shown
+        if (!owns() || controller.signal.aborted) return;
+        setError(describeFetchError(e));
+      } finally {
+        clearTimeout(timeout);
+        if (owns()) setLoading(false);
+      }
+    };
+
+    // `run()` never rejects - every failure is turned into state above - so a joined
+    // caller can await this without risking an unhandled rejection.
+    const promise = run().finally(() => {
+      if (owns()) inFlightRef.current = null;
+    });
+    inFlightRef.current = { key, promise };
+    return promise;
+  }, [date, goalsKey]); // values, not identities; onSyncGarmin + goals read via refs
+
+  // Abort whatever is in flight when the panel goes away
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Date change invalidates the previous date's summary right away, so it is never
   // shown attributed to the new date while we wait for Garmin data
@@ -504,12 +571,12 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
       {error && !summary && (
         <div className="px-5 py-4">
           <div className="rounded-xl p-3 flex items-start gap-2"
-            style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
-            <span className="flex-shrink-0 text-xs" style={{ color: "#f87171" }}>⚠</span>
-            <p className="text-xs" style={{ color: "#f87171" }}>{error}</p>
+            style={{ background: "var(--coral-dim)", border: "1px solid var(--coral-edge)" }}>
+            <span className="flex-shrink-0 text-xs" style={{ color: "var(--coral)" }}>⚠</span>
+            <p className="text-xs" style={{ color: "var(--coral)" }}>{error}</p>
           </div>
-          <button onClick={() => generate(false)} className="mt-3 text-xs transition-colors"
-            style={{ color: "#a78bfa" }}>
+          <button onClick={() => generate(true)} className="mt-3 text-xs font-semibold px-3 py-2 rounded-lg transition-colors"
+            style={{ color: "var(--violet)", background: "var(--violet-dim)", border: "1px solid var(--violet-edge)" }}>
             Try again
           </button>
         </div>
@@ -535,8 +602,8 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
           {/* Refresh error inline banner */}
           {error && (
             <div className="rounded-xl p-3 flex items-start gap-2"
-              style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)" }}>
-              <span className="flex-shrink-0 text-xs" style={{ color: "#f87171" }}>⚠</span>
+              style={{ background: "var(--coral-dim)", border: "1px solid var(--coral-edge)" }}>
+              <span className="flex-shrink-0 text-xs" style={{ color: "var(--coral)" }}>⚠</span>
               <p className="text-xs" style={{ color: "#f87171" }}>{error} — showing previous result</p>
             </div>
           )}

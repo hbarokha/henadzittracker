@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import TrainingCard, { type TrainingAnalysis } from "@/components/training/TrainingCard";
 import type { Goals } from "@/lib/goals";
 
@@ -11,6 +11,16 @@ import type { Goals } from "@/lib/goals";
 // cached for the date, the card offers a button that runs the real summary route —
 // the same generation the Analysis tab performs, so the two stay in sync rather
 // than each holding their own copy.
+// A bare TypeError("Failed to fetch") names neither the cause nor the fix.
+function describeFetchError(e: unknown): string {
+  if (e instanceof DOMException && e.name === "AbortError")
+    return "The request took too long and was stopped. Try again.";
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/failed to fetch|networkerror|load failed/i.test(msg))
+    return "Couldn't reach the server - it may have restarted, or the connection dropped. Try again.";
+  return msg;
+}
+
 export default function TrainingRecommendationCard({
   date, goals,
 }: {
@@ -23,25 +33,45 @@ export default function TrainingRecommendationCard({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // goals is re-created by page.tsx's setGoals(loadGoals()) on mount, so depending
+  // on its identity would re-create `generate` and re-fire the request. Key on the
+  // serialized values and read the object itself from a ref.
+  const goalsRef = useRef(goals);
+  useEffect(() => { goalsRef.current = goals; });
+  const goalsKey = JSON.stringify(goals ?? null);
+
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const loadCached = useCallback(async () => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`/api/ai/summary/cached?date=${date}`);
+      const resp = await fetch(`/api/ai/summary/cached?date=${date}`, { signal: controller.signal });
       const json = await resp.json();
       if (!resp.ok) throw new Error(json.error ?? "Unknown error");
       setTraining(json.training ?? null);
       setGeneratedAt(json.generatedAt ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (controller.signal.aborted) return;
+      setError(describeFetchError(e));
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [date]);
 
   useEffect(() => { loadCached(); }, [loadCached]);
 
+  // One generation at a time: StrictMode double-invokes effects in dev, and a
+  // duplicate request only repeats a slow, billable AI call.
+  const genInFlight = useRef(false);
+
   const generate = useCallback(async (force: boolean) => {
+    if (genInFlight.current) return;
+    genInFlight.current = true;
     setGenerating(true);
     setError(null);
     try {
@@ -53,7 +83,7 @@ export default function TrainingRecommendationCard({
           date,
           force,
           time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
-          goals,
+          goals: goalsRef.current,
         }),
       });
       const raw = await resp.text();
@@ -71,11 +101,12 @@ export default function TrainingRecommendationCard({
       setTraining(data.training ?? null);
       setGeneratedAt(data.cachedAt ?? new Date().toISOString());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeFetchError(e));
     } finally {
+      genInFlight.current = false;
       setGenerating(false);
     }
-  }, [date, goals]);
+  }, [date, goalsKey]); // values, not identities; goals read via ref
 
   const stamp = generatedAt
     ? new Date(generatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
