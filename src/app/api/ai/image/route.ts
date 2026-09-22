@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeImageMeal } from "@/lib/gemini";
+import { heartbeatJson } from "@/lib/heartbeat";
 
 const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
@@ -39,14 +40,21 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Read the upload before streaming starts — a malformed body should still be a real
+  // 4xx, not an in-body error on a 200.
+  let base64: string;
   try {
-    const bytes = await file.arrayBuffer();
-    const base64 = Buffer.from(bytes).toString("base64");
-    const result = await analyzeImageMeal(base64, file.type);
-    return NextResponse.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unexpected error";
-    const status = message.includes("GEMINI_API_KEY") ? 500 : 502;
-    return NextResponse.json({ error: message }, { status });
+    base64 = Buffer.from(await file.arrayBuffer()).toString("base64");
+  } catch {
+    return NextResponse.json({ error: "Could not read the uploaded image" }, { status: 400 });
   }
+  const mimeType = file.type;
+
+  // Heartbeat-streamed: a 10 MB photo plus a Gemini retry can outlast Azure SWA's ~45s
+  // idle kill. Status is always 200 and failures arrive as {"error": …} in the body —
+  // callers MUST check data.error, not resp.ok.
+  return heartbeatJson(async () => {
+    const result = await analyzeImageMeal(base64, mimeType);
+    return result as unknown as Record<string, unknown>;
+  });
 }

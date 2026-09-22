@@ -6,6 +6,7 @@ import type { Goals } from "@/lib/goals";
 import { IconPill, IconDna, IconCalendar, IconTrendingUp, IconBars } from "@/components/icons";
 import { InfoTipButton, InfoTipPanel } from "@/components/InfoTip";
 import { bioAgeTip } from "@/lib/widgetTips";
+import { describeFetchError } from "@/lib/aiFetch";
 
 interface SummarySection {
   score: number;
@@ -338,19 +339,6 @@ function BioAgeCard({ data }: { data: BiologicalAge }) {
   );
 }
 
-// `fetch` rejects with a bare TypeError("Failed to fetch") for any network-level
-// failure - the dev server restarting, a dropped connection, being offline. That
-// string alone tells the user nothing about what happened or what to do, so name
-// the likely cause and the next action.
-function describeFetchError(e: unknown): string {
-  if (e instanceof DOMException && e.name === "AbortError")
-    return "The analysis took too long and was stopped. Try again.";
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/failed to fetch|networkerror|load failed/i.test(msg))
-    return "Couldn't reach the server - it may have restarted, or the connection dropped. Try again.";
-  return msg;
-}
-
 export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, goals }: Props) {
   const [summary, setSummary] = useState<HealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -438,7 +426,7 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
       } catch (e) {
         // A superseded or unmounted request is not a failure the user should be shown
         if (!owns() || controller.signal.aborted) return;
-        setError(describeFetchError(e));
+        setError(describeFetchError(e, "The analysis"));
       } finally {
         clearTimeout(timeout);
         if (owns()) setLoading(false);

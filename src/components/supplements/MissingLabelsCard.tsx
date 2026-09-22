@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Supplement } from "@/lib/supplements";
 import { needsLabel } from "@/lib/ingredientLedger";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 /** What the grounded web lookup returns for one product. */
 interface LookupResult {
@@ -44,17 +45,16 @@ export default function MissingLabelsCard({ items, onSaved }: {
   async function lookup(s: Supplement) {
     patch(s.id, { status: "loading", error: undefined });
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "lookup-ingredients", name: s.name, brand: s.brand }),
+      // Heartbeat-streamed route: 200 with an in-body error. Bounded so one unanswerable
+      // product cannot stall the sequential "look up all" run behind it.
+      const data = await fetchAiJson<LookupResult>("/api/ai/supplements", {
+        body: { action: "lookup-ingredients", name: s.name, brand: s.brand },
+        timeoutMs: 100_000,
+        what: "The label lookup",
       });
-      const data = await resp.json();
-      // Heartbeat-streamed route: 200 with an in-body error
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Lookup failed");
       patch(s.id, { status: "done", result: data });
     } catch (e) {
-      patch(s.id, { status: "done", error: e instanceof Error ? e.message : String(e) });
+      patch(s.id, { status: "done", error: describeFetchError(e, "The label lookup") });
     }
   }
 

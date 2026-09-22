@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeTextMeal } from "@/lib/gemini";
+import { heartbeatJson } from "@/lib/heartbeat";
 
 export async function POST(request: NextRequest) {
   let description: string;
@@ -13,12 +14,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "description is required" }, { status: 400 });
   }
 
-  try {
-    const result = await analyzeTextMeal(description.trim());
-    return NextResponse.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unexpected error";
-    const status = message.includes("GEMINI_API_KEY") ? 500 : 502;
-    return NextResponse.json({ error: message }, { status });
-  }
+  const trimmed = description.trim();
+
+  // Heartbeat-streamed like every other AI route: a Gemini retry ladder can outlast
+  // Azure SWA's ~45s idle kill, which used to return a gateway HTML body that the
+  // client's resp.json() choked on. Status is always 200 and failures arrive as
+  // {"error": …} in the body — callers MUST check data.error, not resp.ok.
+  return heartbeatJson(async () => {
+    const result = await analyzeTextMeal(trimmed);
+    return result as unknown as Record<string, unknown>;
+  });
 }

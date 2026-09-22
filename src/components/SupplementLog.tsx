@@ -12,6 +12,7 @@ import {
 import MissingLabelsCard from "./supplements/MissingLabelsCard";
 import { type SupplementSchedule, DAILY, isScheduledOn, describeSchedule } from "@/lib/schedule";
 import { IconPill } from "@/components/icons";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 interface SupplementWithLog extends Supplement {
   taken: boolean;
@@ -205,15 +206,13 @@ export default function SupplementLog({ date }: Props) {
     setTipsLoading(true);
     setTipsError(null);
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate-tips" }),
-      });
-      const data = await resp.json();
-      // Heartbeat-streamed route: status is 200 once streaming starts, errors are in-body
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
-      const tips: { id: string; usageTip: string; description: string }[] = data.tips ?? [];
+      // Heartbeat-streamed route: status is 200 once streaming starts, errors are
+      // in-body — fetchAiJson checks both, and bounds a connection that never answers.
+      const data = await fetchAiJson<{ tips?: { id: string; usageTip: string; description: string }[] }>(
+        "/api/ai/supplements",
+        { body: { action: "generate-tips" }, timeoutMs: 190_000, what: "Tip generation" },
+      );
+      const tips = data.tips ?? [];
       await Promise.all(
         tips.map((t) =>
           fetch("/api/supplements", {
@@ -225,7 +224,7 @@ export default function SupplementLog({ date }: Props) {
       );
       await load();
     } catch (e) {
-      setTipsError(e instanceof Error ? e.message : String(e));
+      setTipsError(describeFetchError(e, "Tip generation"));
     } finally {
       setTipsLoading(false);
     }
@@ -240,18 +239,16 @@ export default function SupplementLog({ date }: Props) {
     setAdjustments([]);
     setRemovals([]);
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "recommend" }),
+      const data = await fetchAiJson<{
+        recommendations?: AISuggestion[]; adjustments?: Adjustment[]; removals?: Removal[];
+      }>("/api/ai/supplements", {
+        body: { action: "recommend" }, timeoutMs: 190_000, what: "The stack review",
       });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setRecommendations(data.recommendations ?? []);
       setAdjustments(data.adjustments ?? []);
       setRemovals(data.removals ?? []);
     } catch (e) {
-      setRecsError(e instanceof Error ? e.message : String(e));
+      setRecsError(describeFetchError(e, "The stack review"));
     } finally {
       setRecsLoading(false);
     }
@@ -294,13 +291,14 @@ export default function SupplementLog({ date }: Props) {
   async function lookupIngredientsFor(s: SupplementWithLog) {
     setLookupId(s.id);
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "lookup-ingredients", name: s.name, brand: s.brand }),
+      // The route bounds the lookup itself and reports a slow one as found:false;
+      // this ceiling only catches a connection the server never answered on.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await fetchAiJson<any>("/api/ai/supplements", {
+        body: { action: "lookup-ingredients", name: s.name, brand: s.brand },
+        timeoutMs: 100_000,
+        what: "The label lookup",
       });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setLookupResult((prev) => ({ ...prev, [s.id]: data }));
       if (data.found && data.ingredients) {
         setEditForm((f) => ({ ...f, ingredients: data.ingredients }));
@@ -308,7 +306,7 @@ export default function SupplementLog({ date }: Props) {
     } catch (e) {
       setLookupResult((prev) => ({
         ...prev,
-        [s.id]: { found: false, note: e instanceof Error ? e.message : String(e) },
+        [s.id]: { found: false, note: describeFetchError(e, "The label lookup") },
       }));
     } finally {
       setLookupId(null);

@@ -8,6 +8,7 @@ import {
 } from "@/lib/labs-catalog";
 import { useInfoTip } from "@/components/InfoTip";
 import { TIP_LABS } from "@/lib/widgetTips";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 const STATUS_COLOR: Record<MarkerStatus, string> = {
   optimal: "var(--sage)",
@@ -150,15 +151,15 @@ export default function LabResults() {
     setExtractError(null);
     setExtractNote(null);
     try {
-      const resp = await fetch("/api/ai/labs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64, mimeType: mime }),
+      // Heartbeat-streamed route: 200 with the error in the body. A multi-page PDF is
+      // the slowest input in the app, so the ceiling sits above the route's 90s budget.
+      const data = await fetchAiJson<{
+        date?: string | null; source?: string | null;
+        markers?: Array<{ key: string; value: number; unit: string }>;
+      }>("/api/ai/labs", {
+        body: { base64, mimeType: mime }, timeoutMs: 120_000, what: "The report extraction",
       });
-      const data = await resp.json();
-      // Heartbeat-streamed route: 200 with the error in the body
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Extraction failed");
-      const markers: Array<{ key: string; value: number; unit: string }> = data.markers ?? [];
+      const markers = data.markers ?? [];
       if (!markers.length) {
         setExtractError("No recognised results found — enter them manually.");
         return;

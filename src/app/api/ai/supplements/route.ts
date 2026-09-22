@@ -11,7 +11,17 @@ import { formatIngredientLedger, TOP_UP_RULES } from "@/lib/ingredientLedger";
 import { TIME_OF_DAY_ENUM, TIME_OF_DAY_PROMPT_NOTE, isTimeOfDay } from "@/lib/timeOfDay";
 import { getLabPanels, formatLabsForPrompt } from "@/lib/labs";
 
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+import { callGeminiJSON, type GeminiPart } from "@/lib/geminiCall";
+
+// Wall-clock budget for the grounded label lookup. It runs BEFORE Gemini on
+// `identify-text`, uses claude-opus-5 with the web_search server tool, and resumes up
+// to MAX_CONTINUATIONS times — so with no bound a slow search stalls the whole
+// describe-a-supplement flow. Inside heartbeatJson() that stall is invisible: the
+// heartbeat holds the socket open, so the request never errors and the spinner never
+// stops. Bounded, a slow lookup degrades to "ingredients NOT RECORDED", which is the
+// designed fallback.
+const LOOKUP_INLINE_MS = 45_000;  // lookup + a full Gemini call still have to fit
+const LOOKUP_STANDALONE_MS = 75_000; // the 🔎 button: the lookup IS the whole request
 
 const SUPP_SCHEMA = `{
   "name": "string — exact supplement name (no brand prefix)",
@@ -71,22 +81,29 @@ const DOSAGE_OVERLAP_RULES = `- DOSAGE: evaluate every dose as the TOTAL daily a
 - Generic single-ingredient entries (e.g. "Magnesium glycinate 400mg") are self-describing — the name is the ingredient, no recorded list needed
 - ABSORPTION: account for competing minerals (e.g. calcium vs iron vs zinc, magnesium vs calcium) and synergies (vitamin D + K2, iron + vitamin C, fat-soluble vitamins with dietary fat) when advising timing`;
 
-async function callGemini(parts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }>) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-  const resp = await fetch(`${BASE_URL}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
-  if (!resp.ok) throw new Error(`Gemini ${resp.status}: ${await resp.text()}`);
-  const json = await resp.json();
-  const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Empty Gemini response");
-  return JSON.parse(text);
+/**
+ * Every supplement action goes through the shared hardened caller: bounded attempts, a
+ * 429/503 retry ladder, and a flash-lite last resort. The route is already
+ * heartbeat-streamed, so these budgets bound user patience rather than the gateway.
+ *
+ * Two weight classes, measured rather than guessed. `identify-*` sends a short prompt
+ * and gets a short answer. `recommend` and `generate-tips` send the entire stack plus
+ * the ingredient ledger, Garmin context, labs and adherence, and write a long
+ * structured answer — a single attempt genuinely runs past 35s (observed: two
+ * consecutive 35s attempts both timed out on a real stack), so capping them at the
+ * light budget turns a working feature into a guaranteed timeout.
+ */
+const LIGHT = { budgetMs: 75_000, attemptMs: 35_000 };
+const HEAVY = { budgetMs: 170_000, attemptMs: 80_000 };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callGemini(
+  parts: GeminiPart[],
+  weight: { budgetMs: number; attemptMs: number } = LIGHT,
+  label = "Supplement AI",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  return callGeminiJSON(parts, { ...weight, label });
 }
 
 const ACTIONS = ["identify-text", "identify-image", "recommend", "generate-tips", "lookup-ingredients"] as const;
@@ -120,7 +137,10 @@ export async function POST(req: Request) {
       // Grounded label lookup runs FIRST when the request names a product, so the
       // suggestion is built from a real ingredient panel instead of model recall.
       // Returns null without ANTHROPIC_API_KEY and found:false for generic requests.
-      const lookup = await lookupIngredients(prompt).catch(() => null);
+      const lookup = await lookupIngredients(
+        prompt,
+        AbortSignal.timeout(LOOKUP_INLINE_MS),
+      ).catch(() => null);
       const verifiedBlock = lookup?.found
         ? `\n\nVERIFIED PRODUCT DATA — read from ${lookup.sourceUrl} by web search. This is the ONLY trustworthy formulation source; use it verbatim and never contradict it:
 Product: ${lookup.productName ?? prompt}${lookup.brand ? ` (${lookup.brand})` : ""}
@@ -171,8 +191,18 @@ ${TOP_UP_RULES}
       if (!process.env.ANTHROPIC_API_KEY) {
         return { found: false, sources: [], note: "Ingredient lookup needs ANTHROPIC_API_KEY — enter the label manually" };
       }
-      const lookup = await lookupIngredients(query);
-      return (lookup ?? { found: false, sources: [], note: "Lookup unavailable" }) as unknown as Record<string, unknown>;
+      // A timed-out lookup is reported as "not found", not thrown: the caller's job is
+      // to fall back to manual entry either way, and an error banner suggests the
+      // product is unlookupable rather than that the search ran long.
+      const lookup = await lookupIngredients(
+        query,
+        AbortSignal.timeout(LOOKUP_STANDALONE_MS),
+      ).catch(() => null);
+      return (lookup ?? {
+        found: false,
+        sources: [],
+        note: "Lookup did not finish in time — enter the label manually or try again",
+      }) as unknown as Record<string, unknown>;
     }
 
     // ── identify from photo ──────────────────────────────────────────────────
@@ -379,7 +409,7 @@ ${DOSAGE_OVERLAP_RULES}
 - Return all three keys even when an array is empty
 - Return only valid JSON, no markdown`;
 
-      const result = await callGemini([{ text: systemPrompt }]);
+      const result = await callGemini([{ text: systemPrompt }], HEAVY, "Stack review");
 
       // Drop anything targeting an id that isn't actually in the stack — a hallucinated
       // id would render an "Apply" button that silently does nothing.
@@ -507,7 +537,7 @@ ${DOSAGE_OVERLAP_RULES}
 - description must be concise and relevant to this specific user, not generic
 - Return only valid JSON, no markdown`;
 
-      const result = await callGemini([{ text: prompt }]);
+      const result = await callGemini([{ text: prompt }], HEAVY, "Tip generation");
       return result;
     }
 

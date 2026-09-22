@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import type { NutritionFood } from "@/lib/gemini";
 import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 import AmountStepper from "./AmountStepper";
 import CameraModal from "./CameraModal";
 
@@ -60,9 +61,13 @@ export default function AIPhotoTab({ onAdd }: Props) {
     try {
       const form = new FormData();
       form.append("image", file);
-      const res  = await fetch("/api/ai/image", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Analysis failed");
+      // Heartbeat-streamed route: status is 200 once streaming starts and failures
+      // arrive in-body, so fetchAiJson (not resp.ok) decides success.
+      const data = await fetchAiJson<{ foods?: NutritionFood[] }>("/api/ai/image", {
+        formData: form,
+        timeoutMs: 90_000,
+        what: "The photo analysis",
+      });
       if (!data.foods?.length)
         throw new Error("No food items detected. Try a clearer, well-lit photo of your plate.");
       const foods: NutritionFood[] = data.foods;
@@ -70,7 +75,7 @@ export default function AIPhotoTab({ onAdd }: Props) {
       setSelected(new Set(foods.map((_, i) => i)));
       setQuantities(foods.map((f) => (isWeighable(f) ? (f.amount as number) : 1)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(describeFetchError(err, "The photo analysis"));
     } finally {
       setLoading(false);
     }

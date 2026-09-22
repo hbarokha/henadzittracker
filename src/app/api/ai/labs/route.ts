@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { heartbeatJson } from "@/lib/heartbeat";
+import { callGeminiJSON } from "@/lib/geminiCall";
 import { BIOMARKERS, BIOMARKERS_BY_KEY } from "@/lib/labs";
 
 // Gemini reads the report; the catalog constrains what it may return. Photos of a
 // printed panel and PDF exports are both accepted — inline_data takes either.
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+// A multi-page PDF is the slowest input in the app, hence the wider budget.
+const BUDGET_MS = 90_000;
 
 const MARKER_MENU = BIOMARKERS
   .map((b) => `  ${b.key} = ${b.label} (usual unit ${b.unit}${b.altUnits ? `, also seen as ${Object.keys(b.altUnits).join(" / ")}` : ""})`)
@@ -17,9 +19,6 @@ export async function POST(req: Request) {
   if (!base64) return NextResponse.json({ error: "No file supplied" }, { status: 400 });
 
   return heartbeatJson(async () => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("GEMINI_API_KEY not set");
-
     const prompt = `You are reading a laboratory blood test report. Extract every result that matches one of the known markers below.
 
 Known markers (use the key EXACTLY as written on the left):
@@ -47,28 +46,23 @@ Rules:
 - Ignore reference ranges printed next to results — return the patient's value only
 - Return only valid JSON, no markdown`;
 
-    const resp = await fetch(`${BASE_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inline_data: { mime_type: mimeType || "image/jpeg", data: base64 } },
-          ],
-        }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
-      }),
-    });
-    if (!resp.ok) throw new Error(`Gemini ${resp.status}: ${await resp.text()}`);
-    const json = await resp.json();
-    const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("Empty Gemini response");
-
-    const parsed = JSON.parse(text) as {
+    const parsed = await callGeminiJSON<{
       date?: string | null; source?: string | null;
       markers?: Array<{ key?: string; value?: unknown; unit?: string }>;
-    };
+    }>(
+      [
+        { text: prompt },
+        { inline_data: { mime_type: mimeType || "image/jpeg", data: base64 } },
+      ],
+      {
+        budgetMs: BUDGET_MS,
+        attemptMs: 40_000,
+        label: "Lab report",
+        // Low temperature matters more here than anywhere else in the app: a misread
+        // decimal on a lab value is worse than no value.
+        generationConfig: { temperature: 0.1 },
+      },
+    );
 
     // Keep only markers the catalog knows about — a hallucinated key would render an
     // unlabeled row the user can't interpret or correct.

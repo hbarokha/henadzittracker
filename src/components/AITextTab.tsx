@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { NutritionFood } from "@/lib/gemini";
 import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 import AmountStepper from "./AmountStepper";
 
 function Spinner() {
@@ -62,18 +63,18 @@ export default function AITextTab({ onAdd, accentColor = "var(--amber)" }: Props
     setQuantities([]);
 
     try {
-      const res  = await fetch("/api/ai/text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: trimmed }),
+      // Heartbeat-streamed route: status is 200 once streaming starts and failures
+      // arrive in-body, so fetchAiJson (not resp.ok) decides success.
+      const data = await fetchAiJson<{ foods?: NutritionFood[] }>("/api/ai/text", {
+        body: { description: trimmed },
+        timeoutMs: 60_000,
+        what: "The meal analysis",
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Analysis failed");
       if (!data.foods?.length) throw new Error("No foods found. Try being more specific.");
       setResults(data.foods);
       setQuantities(data.foods.map((f: NutritionFood) => (isWeighable(f) ? (f.amount as number) : 1)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(describeFetchError(err, "The meal analysis"));
     } finally {
       setLoading(false);
     }

@@ -9,6 +9,7 @@ import {
   SuggestionCard, postSupplement, suggestionUsageTip, ScheduleEditor,
 } from "./shared";
 import { type SupplementSchedule, DAILY } from "@/lib/schedule";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 declare class BarcodeDetector {
   constructor(options?: { formats: string[] });
@@ -98,9 +99,13 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
     setBcError(null);
     bcStopCamera();
     try {
-      const res = await fetch(`/api/ai/barcode?supplement=1&barcode=${encodeURIComponent(barcode)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Lookup failed");
+      // Open Food Facts can be slow or unreachable; bound it so the scanner does not
+      // sit on "loading" with nothing to show for it.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await fetchAiJson<any>(
+        `/api/ai/barcode?supplement=1&barcode=${encodeURIComponent(barcode)}`,
+        { timeoutMs: 30_000, what: "The barcode lookup" },
+      );
       setBcConfirm({
         name: data.supplement.name ?? "",
         dose: data.supplement.dose != null ? String(data.supplement.dose) : "",
@@ -112,7 +117,7 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
       setBcTimeOfDay("morning");
       setBcPhase("result");
     } catch (err) {
-      setBcError(err instanceof Error ? err.message : "Something went wrong");
+      setBcError(describeFetchError(err, "The barcode lookup"));
       setBcPhase("error");
     }
   }
@@ -239,17 +244,16 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
     setDescError(null);
     setDescSuggestions([]);
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "identify-text", prompt: descPrompt }),
+      // Runs a grounded web lookup before Gemini, so the ceiling covers both legs
+      // (server budget: 45s lookup + 75s Gemini).
+      const data = await fetchAiJson<{ supplements?: AISuggestion[] }>("/api/ai/supplements", {
+        body: { action: "identify-text", prompt: descPrompt },
+        timeoutMs: 150_000,
+        what: "The supplement search",
       });
-      const data = await resp.json();
-      // Heartbeat-streamed route: status is 200 once streaming starts, errors are in-body
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setDescSuggestions(data.supplements ?? []);
     } catch (e) {
-      setDescError(e instanceof Error ? e.message : String(e));
+      setDescError(describeFetchError(e, "The supplement search"));
     } finally {
       setDescLoading(false);
     }
@@ -282,16 +286,14 @@ export default function SupplementAddPanel({ onSaved, onClose, onDraft }: Props)
     setPhotoError(null);
     setPhotoSuggestions([]);
     try {
-      const resp = await fetch("/api/ai/supplements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "identify-image", base64: photoBase64, mimeType: photoMime }),
+      const data = await fetchAiJson<{ supplements?: AISuggestion[] }>("/api/ai/supplements", {
+        body: { action: "identify-image", base64: photoBase64, mimeType: photoMime },
+        timeoutMs: 100_000,
+        what: "The label scan",
       });
-      const data = await resp.json();
-      if (!resp.ok || data.error) throw new Error(data.error ?? "Unknown error");
       setPhotoSuggestions(data.supplements ?? []);
     } catch (e) {
-      setPhotoError(e instanceof Error ? e.message : String(e));
+      setPhotoError(describeFetchError(e, "The label scan"));
     } finally {
       setPhotoLoading(false);
     }

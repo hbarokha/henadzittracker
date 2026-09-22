@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -36,24 +37,16 @@ export default function HealthChat({ date }: { date: string }) {
     setBusy(true);
     setError(null);
     try {
-      const resp = await fetch("/api/ai/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, date }),
+      // The route's own deadline is 100s; give the connection a little more than that
+      // so a server-side timeout reports its real reason instead of being cut off here.
+      const data = await fetchAiJson<{ reply: string }>("/api/ai/chat", {
+        body: { messages: next, date },
+        timeoutMs: 120_000,
+        what: "The answer",
       });
-      const raw = await resp.text();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any;
-      try { data = JSON.parse(raw); } catch {
-        throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
-      }
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-      // The route streams with status 200 committed up front — failures arrive
-      // as {"error": ...} in the body rather than a non-2xx status.
-      if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(describeFetchError(e, "The answer"));
     } finally {
       setBusy(false);
     }

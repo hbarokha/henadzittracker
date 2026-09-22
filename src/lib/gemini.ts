@@ -1,5 +1,4 @@
-const MODEL = "gemini-2.5-flash";
-const BASE_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+import { callGeminiJSON, type GeminiPart } from "./geminiCall";
 
 /** Estimated micronutrients per food item. Keys match lib/micros.ts MICROS catalog. */
 export interface FoodMicros {
@@ -65,49 +64,43 @@ Rules:
 - If quantity is ambiguous, assume a single typical serving
 - Return only valid JSON, no markdown or extra text`;
 
-type GeminiPart =
-  | { text: string }
-  | { inline_data: { mime_type: string; data: string } };
+// Budgets are deliberately tighter than the supplement/summary routes: logging a meal
+// is the app's most-used interaction and should fail fast and retryably rather than
+// make the user watch a spinner. Both routes heartbeat-stream, so these are patience
+// budgets, not gateway budgets.
+const TEXT_BUDGET_MS = 40_000;
+const IMAGE_BUDGET_MS = 60_000; // a 10 MB inline image takes longer to upload and read
 
-async function callGemini(parts: GeminiPart[]): Promise<NutritionResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY environment variable is not set");
-
-  const response = await fetch(`${BASE_URL}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { responseMimeType: "application/json" },
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Gemini API returned ${response.status}: ${body}`);
-  }
-
-  const json = await response.json();
-  const text: string | undefined = json.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error("Gemini returned an empty response");
-
-  return JSON.parse(text) as NutritionResult;
-}
-
-export async function analyzeTextMeal(description: string): Promise<NutritionResult> {
-  return callGemini([
+export async function analyzeTextMeal(
+  description: string,
+  signal?: AbortSignal,
+): Promise<NutritionResult> {
+  const parts: GeminiPart[] = [
     { text: NUTRITION_PROMPT },
     { text: `Analyze the nutrition in this meal: ${description}` },
-  ]);
+  ];
+  return callGeminiJSON<NutritionResult>(parts, {
+    budgetMs: TEXT_BUDGET_MS,
+    attemptMs: 20_000,
+    label: "Meal analysis",
+    signal,
+  });
 }
 
 export async function analyzeImageMeal(
   base64Data: string,
-  mimeType: string
+  mimeType: string,
+  signal?: AbortSignal,
 ): Promise<NutritionResult> {
-  return callGemini([
+  const parts: GeminiPart[] = [
     { text: NUTRITION_PROMPT },
     { text: "Identify every food item visible in this image and estimate the nutrition for the visible portions:" },
     { inline_data: { mime_type: mimeType, data: base64Data } },
-  ]);
+  ];
+  return callGeminiJSON<NutritionResult>(parts, {
+    budgetMs: IMAGE_BUDGET_MS,
+    attemptMs: 30_000,
+    label: "Photo analysis",
+    signal,
+  });
 }

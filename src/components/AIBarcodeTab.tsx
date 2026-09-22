@@ -4,6 +4,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 import type { NutritionFood } from "@/lib/gemini";
 import { scaleFoodAmount, isWeighable } from "@/lib/foodScale";
 import AmountStepper from "./AmountStepper";
+import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
 // BarcodeDetector is not in all TS lib.dom versions yet
 declare class BarcodeDetector {
@@ -77,16 +78,18 @@ export default function AIBarcodeTab({ onAdd, accentColor = "var(--amber)" }: Pr
     setError(null);
     stopCamera();
     try {
-      const res  = await fetch(`/api/ai/barcode?barcode=${encodeURIComponent(barcode)}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Lookup failed");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await fetchAiJson<any>(
+        `/api/ai/barcode?barcode=${encodeURIComponent(barcode)}`,
+        { timeoutMs: 30_000, what: "The barcode lookup" },
+      );
       setFood(data.food);
       setMeta(data.meta);
       setQty(1);
       setAmount(isWeighable(data.food) ? (data.food.amount as number) : 1);
       setPhase("result");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(describeFetchError(err, "The barcode lookup"));
       setPhase("error");
     }
   }

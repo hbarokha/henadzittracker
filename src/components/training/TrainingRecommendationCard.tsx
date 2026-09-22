@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import TrainingCard, { type TrainingAnalysis } from "@/components/training/TrainingCard";
 import type { Goals } from "@/lib/goals";
+import { describeFetchError } from "@/lib/aiFetch";
 
 // Train-today-or-rest verdict on the Training tab.
 //
@@ -11,15 +12,6 @@ import type { Goals } from "@/lib/goals";
 // cached for the date, the card offers a button that runs the real summary route —
 // the same generation the Analysis tab performs, so the two stay in sync rather
 // than each holding their own copy.
-// A bare TypeError("Failed to fetch") names neither the cause nor the fix.
-function describeFetchError(e: unknown): string {
-  if (e instanceof DOMException && e.name === "AbortError")
-    return "The request took too long and was stopped. Try again.";
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/failed to fetch|networkerror|load failed/i.test(msg))
-    return "Couldn't reach the server - it may have restarted, or the connection dropped. Try again.";
-  return msg;
-}
 
 export default function TrainingRecommendationCard({
   date, goals,
