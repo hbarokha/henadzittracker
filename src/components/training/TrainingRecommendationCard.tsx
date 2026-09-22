@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import TrainingCard, { type TrainingAnalysis } from "@/components/training/TrainingCard";
 import type { Goals } from "@/lib/goals";
-import { describeFetchError } from "@/lib/aiFetch";
+import { fetchAiJson, describeFetchError, AiTransportError, pollForResult } from "@/lib/aiFetch";
 
 // Train-today-or-rest verdict on the Training tab.
 //
@@ -66,34 +66,41 @@ export default function TrainingRecommendationCard({
     genInFlight.current = true;
     setGenerating(true);
     setError(null);
+    // Declared out here so the catch can read it: only a cache entry newer than this
+    // counts as this run's result, never the stale one a force was sent to replace.
+    const startedAt = new Date().toISOString();
     try {
       const now = new Date();
-      const resp = await fetch("/api/ai/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await fetchAiJson<any>("/api/ai/summary", {
+        timeoutMs: 180_000,
+        what: "The verdict",
+        body: {
           date,
           force,
           time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
           goals: goalsRef.current,
-        }),
+        },
       });
-      const raw = await resp.text();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let data: any;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        // The route heartbeat-streams with the status committed up front; a plain-text
-        // body means the platform gateway killed it mid-flight.
-        throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out — try again");
-      }
-      if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-      if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
       setTraining(data.training ?? null);
       setGeneratedAt(data.cachedAt ?? new Date().toISOString());
     } catch (e) {
-      setError(describeFetchError(e));
+      // Cut connection, not a failed generation — the server finishes and caches anyway
+      // (the summary runs 60-100s, past the platform's per-response cap), so read the
+      // result back instead of reporting a failure for work that succeeded.
+      if (e instanceof AiTransportError) {
+        const recovered = await pollForResult<{ generatedAt: string | null; training: TrainingAnalysis | null }>(
+          `/api/ai/summary/cached?date=${date}`,
+          (d) => !!d.generatedAt && d.generatedAt > startedAt,
+          { timeoutMs: 120_000, intervalMs: 5_000 },
+        );
+        if (recovered) {
+          setTraining(recovered.training ?? null);
+          setGeneratedAt(recovered.generatedAt);
+          return;
+        }
+      }
+      setError(describeFetchError(e, "The verdict"));
     } finally {
       genInFlight.current = false;
       setGenerating(false);

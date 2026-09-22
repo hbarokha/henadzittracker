@@ -6,7 +6,7 @@ import type { Goals } from "@/lib/goals";
 import { IconPill, IconDna, IconCalendar, IconTrendingUp, IconBars } from "@/components/icons";
 import { InfoTipButton, InfoTipPanel } from "@/components/InfoTip";
 import { bioAgeTip } from "@/lib/widgetTips";
-import { describeFetchError } from "@/lib/aiFetch";
+import { fetchAiJson, describeFetchError, AiTransportError, pollForResult } from "@/lib/aiFetch";
 
 interface SummarySection {
   score: number;
@@ -384,6 +384,10 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
     // error, or clear the guard out from under the request that replaced it.
     const owns = () => abortRef.current === controller;
 
+    // Set at the moment the POST goes out, read back in the catch to reject a cache
+    // entry that predates this attempt.
+    const startedAtRef = { current: new Date().toISOString() };
+
     const run = async (): Promise<void> => {
       // The route heartbeat-streams, so a stalled connection would otherwise spin forever
       const timeout = setTimeout(() => controller.abort(), 180_000);
@@ -394,38 +398,46 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
           try { await syncRef.current(); } catch {}
         }
         const now = new Date();
-        const resp = await fetch("/api/ai/summary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        // Anything already cached was generated BEFORE this moment; recovery below only
+        // accepts a result newer than this, so a forced regeneration can never "recover"
+        // the stale entry it was sent to replace.
+        startedAtRef.current = new Date().toISOString();
+        const data = await fetchAiJson<HealthSummary>("/api/ai/summary", {
           signal: controller.signal,
-          body: JSON.stringify({
+          timeoutMs: 180_000,
+          what: "The analysis",
+          body: {
             date,
             force,
             time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
             // Real macro goals from the settings modal - otherwise the server only knows defaults
             goals: goalsRef.current,
-          }),
+          },
         });
-        const raw = await resp.text();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let data: any;
-        try {
-          data = JSON.parse(raw);
-        } catch {
-          // Platform gateway (e.g. Azure SWA) killed the request and returned a plain-text
-          // body instead of JSON - surface a clear message rather than the raw parse error.
-          throw new Error(resp.ok ? "Server returned an invalid response" : "Request timed out - try again");
-        }
-        if (!resp.ok) throw new Error(data.error ?? "Unknown error");
-        // The route streams with status 200 committed up front - a failed generation
-        // arrives as {"error": ...} in the body rather than a non-2xx status.
-        if (data && typeof data === "object" && "error" in data) throw new Error(String(data.error));
         if (!owns()) return;
-        setSummary(data as HealthSummary);
+        setSummary(data);
         setError(null);
       } catch (e) {
         // A superseded or unmounted request is not a failure the user should be shown
         if (!owns() || controller.signal.aborted) return;
+
+        // The connection was cut, not the generation. This analysis takes 60-100s on real
+        // data and the platform caps how long one response may take, so the server keeps
+        // going and writes its cache with nobody listening - which is why a manual refresh
+        // shows the result. Do that refresh for the user instead of showing an error.
+        if (e instanceof AiTransportError) {
+          const recovered = await pollForResult<{ generatedAt: string | null; summary: HealthSummary | null }>(
+            `/api/ai/summary/cached?date=${date}&full=1`,
+            (d) => !!d.summary && !!d.generatedAt && d.generatedAt > startedAtRef.current,
+            { timeoutMs: 120_000, intervalMs: 5_000, signal: controller.signal },
+          );
+          if (!owns() || controller.signal.aborted) return;
+          if (recovered?.summary) {
+            setSummary(recovered.summary);
+            setError(null);
+            return;
+          }
+        }
         setError(describeFetchError(e, "The analysis"));
       } finally {
         clearTimeout(timeout);

@@ -32,6 +32,23 @@ export function describeFetchError(e: unknown, what = "The request"): string {
   return msg;
 }
 
+/**
+ * The REQUEST was cut — network drop, platform gateway cap, client abort, truncated
+ * body — as opposed to the server reporting a failure it actually computed.
+ *
+ * The distinction decides whether recovery is worth attempting. A server-reported
+ * `{"error": …}` means the work failed and nothing was written; retrying the read
+ * would find nothing. A cut connection means the server may still be working and may
+ * still persist its result, so polling the cache can recover it.
+ */
+export class AiTransportError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = "AiTransportError";
+    if (options?.cause !== undefined) this.cause = options.cause;
+  }
+}
+
 export interface AiFetchOptions {
   /** JSON body. Mutually exclusive with `formData`. */
   body?: unknown;
@@ -69,27 +86,36 @@ export async function fetchAiJson<T = unknown>(
 
   try {
     const hasBody = body !== undefined || formData !== undefined;
-    const resp = await fetch(url, {
-      method: hasBody ? "POST" : "GET",
-      ...(formData
-        ? { body: formData }
-        : body !== undefined
-          ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
-          : {}),
-      signal: controller.signal,
-    });
+    let resp: Response;
+    let raw: string;
+    try {
+      resp = await fetch(url, {
+        method: hasBody ? "POST" : "GET",
+        ...(formData
+          ? { body: formData }
+          : body !== undefined
+            ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+            : {}),
+        signal: controller.signal,
+      });
+      // Read as text first: a gateway that killed the request returns HTML, and letting
+      // resp.json() throw on it would replace the real problem with a parser message.
+      raw = await resp.text();
+    } catch (e) {
+      // Nothing usable came back — network drop, abort, or a stream cut mid-body.
+      throw new AiTransportError(describeFetchError(e, what), { cause: e });
+    }
 
-    // Read as text first: a gateway that killed the request returns HTML, and letting
-    // resp.json() throw on it would replace the real problem with a parser message.
-    const raw = await resp.text();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any;
     try {
       data = JSON.parse(raw);
     } catch {
-      throw new Error(
+      // Well-formed HTTP but not our JSON: a gateway error page, or a body truncated
+      // mid-stream. Either way the server spoke for itself only by being cut off.
+      throw new AiTransportError(
         resp.ok
-          ? "Server returned an invalid response"
+          ? `${what} was cut off before it finished. Try again.`
           : `${what} was cut off by the server (HTTP ${resp.status}). Try again.`,
       );
     }
@@ -102,4 +128,38 @@ export async function fetchAiJson<T = unknown>(
     clearTimeout(timer);
     external?.removeEventListener("abort", onExternalAbort);
   }
+}
+
+/**
+ * Poll a read-only endpoint until it reports a result, or the deadline passes.
+ *
+ * This exists because `/api/ai/summary` cannot be made to fit inside the platform's
+ * request-duration cap: the health summary genuinely takes 60-100s to generate
+ * (measured on real data), and heartbeat streaming only defeats the gateway's IDLE
+ * timeout, not a ceiling on total response time. The generation still finishes and
+ * still writes its cache — the browser is simply no longer listening. Rather than
+ * showing an error for work that succeeded, poll for the result the server persisted.
+ *
+ * `accept` must reject a PRE-EXISTING cached result, otherwise a forced regeneration
+ * would instantly "recover" the stale entry it was trying to replace.
+ */
+export async function pollForResult<T>(
+  url: string,
+  accept: (data: T) => boolean,
+  opts: { timeoutMs: number; intervalMs?: number; signal?: AbortSignal },
+): Promise<T | null> {
+  const { timeoutMs, intervalMs = 5_000, signal } = opts;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (signal?.aborted) return null;
+    try {
+      const data = await fetchAiJson<T>(url, { timeoutMs: 15_000, signal, what: "The check" });
+      if (accept(data)) return data;
+    } catch {
+      // A failed poll is not a failed generation — keep waiting for the deadline.
+    }
+  }
+  return null;
 }
