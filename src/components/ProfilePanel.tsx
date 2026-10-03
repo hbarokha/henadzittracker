@@ -10,6 +10,7 @@ interface ProfileData {
   sex: "male" | "female";
   activityLevel: ActivityLevel;
   goal?: string;
+  coachNotes?: string;
   updatedAt: string;
   bmr: number;
   tdee: number;
@@ -42,7 +43,7 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     age: 30, heightCm: 175, weightKg: 75, sex: "male" as "male" | "female",
-    activityLevel: "moderate" as ActivityLevel, goal: "",
+    activityLevel: "moderate" as ActivityLevel, goal: "", coachNotes: "",
   });
 
   useEffect(() => {
@@ -51,7 +52,7 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
         setProfile(data);
         setForm({
           age: data.age, heightCm: data.heightCm, weightKg: data.weightKg,
-          sex: data.sex, activityLevel: data.activityLevel, goal: data.goal ?? "",
+          sex: data.sex, activityLevel: data.activityLevel, goal: data.goal ?? "", coachNotes: data.coachNotes ?? "",
         });
       } else {
         setEditing(true);
@@ -125,6 +126,12 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
                     <span className="text-white font-medium">{profile.goal}</span>
                   </div>
                 )}
+                {profile.coachNotes && (
+                  <div className="pt-1 border-t border-gray-700">
+                    <span className="text-gray-400 block text-xs mb-0.5">Coach notes (sent to every AI answer)</span>
+                    <span className="text-white font-medium whitespace-pre-wrap">{profile.coachNotes}</span>
+                  </div>
+                )}
               </div>
 
               <button
@@ -189,6 +196,22 @@ export default function ProfilePanel({ onClose, onTDEEChange }: Props) {
                   placeholder="e.g. Build muscle and improve recovery"
                   className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
                 />
+              </div>
+
+              <div>
+                <label htmlFor="coach-notes" className="block text-xs text-gray-400 mb-1">
+                  Coach notes <span className="text-gray-500">— injuries, diet restrictions, schedule, medications</span>
+                </label>
+                <textarea
+                  id="coach-notes"
+                  value={form.coachNotes}
+                  maxLength={1200}
+                  rows={4}
+                  onChange={(e) => setForm((f) => ({ ...f, coachNotes: e.target.value }))}
+                  placeholder={"e.g. Left knee — no running or jumping until March. No dairy. Can only train before 8am on weekdays."}
+                  className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 resize-y"
+                />
+                <p className="text-[10px] text-gray-500 mt-1">Included in the AI summary, supplement advice, chat and insights, and treated as a hard constraint.</p>
               </div>
 
               <div className="flex gap-3 pt-1">

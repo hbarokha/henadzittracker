@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { FALLBACK_BETA, REFUSAL_FALLBACKS, echoableContent } from "@/lib/claudeFallback";
 import { getAllEntries } from "@/lib/db";
-import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
+import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getDailyView } from "@/lib/supplements";
 import { getLabPanels, latestMarkers, describeRange } from "@/lib/labs";
 import { readGarminCache, dateRange, buildSnapshots, summarizePeriod } from "@/lib/summary/snapshots";
@@ -172,7 +172,8 @@ export async function POST(req: Request) {
   if (messages.length > 40)
     return NextResponse.json({ error: "Conversation too long — start a new chat" }, { status: 400 });
 
-  const system = `You are the in-app health assistant for HenadziTracker. Today is ${date ?? "unknown"} (the date currently selected in the app).
+  const notesLine = coachNotesLine(await loadProfile());
+  const system = `You are the in-app health assistant for HenadziTracker. Today is ${date ?? "unknown"} (the date currently selected in the app).${notesLine}
 You answer questions about the user's own logged data: Garmin metrics (sleep, HRV, stress, Body Battery, workouts, blood pressure, body composition), nutrition log, supplements, and blood work.
 
 - Use the tools to look up real data before answering — never guess numbers. If data is missing for a date, say so plainly.

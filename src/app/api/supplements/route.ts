@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceStats, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceStats, getStockStatuses, getLogForDate, type PlanItem } from "@/lib/supplements";
 import { isTimeOfDay, sanitizeTimeOfDay } from "@/lib/timeOfDay";
 import { normalizeSchedule } from "@/lib/schedule";
 import { shiftDate, dateRange } from "@/lib/summary/snapshots";
@@ -33,8 +33,11 @@ export async function GET(req: Request) {
       supplements.length ? getAdherenceStats(supplements, weekDates) : Promise.resolve({}),
       supplements.length ? getAdherenceStats(supplements, monthDates) : Promise.resolve({}),
     ]);
+    // Bottle stock is about the real "today", not the day being viewed
+    const todayParam = searchParams.get("today");
+    const stock = await getStockStatuses(supplements, todayParam && /^\d{4}-\d{2}-\d{2}$/.test(todayParam) ? todayParam : date);
     return NextResponse.json({
-      supplements, log,
+      supplements, log, stock,
       adherence: { week, weekDays: weekDates.length, month, monthDays: monthDates.length },
     });
   }
@@ -48,7 +51,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true });
   }
   if (body.action === "update") {
+    // inventory: {count, today} = "this many pills are in the bottle right now"; null clears it
+    let inventory: { count: number; asOf: string } | null | undefined;
+    if (body.inventory === null) inventory = null;
+    else if (body.inventory && Number.isFinite(Number(body.inventory.count)) && Number(body.inventory.count) >= 0
+             && /^\d{4}-\d{2}-\d{2}$/.test(body.inventory.today ?? "")) {
+      // A dose already checked off today has already left the bottle, so counting starts tomorrow
+      const takenToday = (await getLogForDate(body.inventory.today)).some((l) => l.supplementId === body.id && l.taken);
+      const [y, m, d] = body.inventory.today.split("-").map(Number);
+      const asOf = takenToday ? new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10) : body.inventory.today;
+      inventory = { count: Math.floor(Number(body.inventory.count)), asOf };
+    }
     await updateSupplement(body.id, {
+      inventory,
       description: body.description, usageTip: body.usageTip, ingredients: body.ingredients,
       name: body.name, brand: body.brand || undefined, dose: body.dose, unit: body.unit,
       pills: body.pills ? Number(body.pills) : undefined,

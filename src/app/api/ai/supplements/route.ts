@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
+import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getAdherenceStats, type Supplement, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule } from "@/lib/schedule";
 import { getAllEntries } from "@/lib/db";
@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     if (body.action === "identify-text") {
       const { prompt } = body as { prompt: string };
       const [profile, allSupps] = await Promise.all([loadProfile(), getAllSupplements()]);
-      const goalLine = profile?.goal ? `\nUser's health goal: ${profile.goal}` : "";
+      const goalLine = (profile?.goal ? `\nUser's health goal: ${profile.goal}` : "") + coachNotesLine(profile);
       const profileLine = profile
         ? `\nUser: ${profile.age}y ${profile.sex}, ${profile.weightKg} kg, ${profile.heightCm} cm, activity: ${profile.activityLevel}`
         : "";
@@ -300,7 +300,7 @@ Rules:
         "## User Profile",
         profile
           ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg | Latest tracked weight: ${na(latestWeight, " kg")}
-BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : ""}`
+BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : ""}${coachNotesLine(profile)}`
           : "Not configured",
         "",
         "## Fitness Metrics",
@@ -491,7 +491,7 @@ ${DOSAGE_OVERLAP_RULES}
       const bpLatest = bpReadings.length ? bpReadings[bpReadings.length - 1] : null;
 
       const contextLines = [
-        profile ? `User: ${profile.age}y ${profile.sex}, ${profile.weightKg}kg, ${profile.heightCm}cm, activity: ${profile.activityLevel}${profile.goal ? `, goal: ${profile.goal}` : ""}` : "",
+        profile ? `User: ${profile.age}y ${profile.sex}, ${profile.weightKg}kg, ${profile.heightCm}cm, activity: ${profile.activityLevel}${profile.goal ? `, goal: ${profile.goal}` : ""}${coachNotesLine(profile)}` : "",
         daily ? `Steps: ${na(daily.steps)} | Active cal: ${na(daily.activeCalories)} | Stress: ${na(daily.avgStressLevel, "/100")} | Resting HR: ${na(daily.restingHeartRate, " bpm")}` : "",
         sleep ? `Sleep: ${sleep.totalSleepSeconds ? ((sleep.totalSleepSeconds as number) / 3600).toFixed(1) + "h" : "no data"} | Score: ${na(sleep.sleepScore)} | Deep: ${sleep.deepSleepSeconds ? Math.round((sleep.deepSleepSeconds as number) / 60) + "min" : "—"} | HRV status: ${na(sleep.hrvStatus)}` : "",
         hrv ? `HRV: ${na(hrv.lastNight, " ms")} | Status: ${na(hrv.status)}` : "",

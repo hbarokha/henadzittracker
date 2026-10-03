@@ -1,6 +1,7 @@
 import { readJson, mutateJson } from "@/lib/storage";
 import type { TimeOfDay } from "@/lib/timeOfDay";
 import { isScheduledOn, countScheduledDays, type SupplementSchedule } from "@/lib/schedule";
+import { computeStock, type Inventory, type StockStatus } from "@/lib/inventory";
 
 export type SupplementUnit = "mg" | "mcg" | "IU" | "g";
 // Slots live in lib/timeOfDay so client components can import the labels/order without
@@ -34,6 +35,8 @@ export interface Supplement {
    * calls for, so a deliberate 3×/week item no longer reads as 43% compliance.
    */
   schedule?: SupplementSchedule;
+  /** Pills in the current bottle as of a date — remaining stock is derived from check-offs since. */
+  inventory?: Inventory;
   createdAt: string;
 }
 
@@ -75,6 +78,8 @@ export async function addSupplement(s: Omit<Supplement, "id" | "createdAt" | "ac
 export async function updateSupplement(
   id: string,
   patch: Partial<Pick<Supplement, "description" | "usageTip" | "ingredients" | "name" | "brand" | "dose" | "unit" | "pills" | "timeOfDay" | "schedule">>
+    // null clears the recorded bottle; undefined leaves it alone
+    & { inventory?: Inventory | null }
 ): Promise<void> {
   await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
     const s = data.supplements.find((x) => x.id === id);
@@ -84,10 +89,27 @@ export async function updateSupplement(
     // usageTip), and a blind Object.assign would overwrite every omitted field with
     // undefined, silently wiping tips and recorded ingredients. Pass "" to clear.
     for (const [k, v] of Object.entries(patch)) {
+      if (k === "inventory" && v === null) { delete s.inventory; continue; }
       if (v !== undefined) (s as unknown as Record<string, unknown>)[k] = v;
     }
     return { write: true };
   });
+}
+
+/** Stock status for every supplement with a recorded bottle, keyed by id. */
+export async function getStockStatuses(
+  supplements: Array<Pick<Supplement, "id" | "pills" | "schedule" | "inventory">>,
+  today: string,
+): Promise<Record<string, StockStatus>> {
+  const withStock = supplements.filter((s) => s.inventory);
+  if (!withStock.length) return {};
+  const data = await loadData();
+  const out: Record<string, StockStatus> = {};
+  for (const s of withStock) {
+    const taken = data.log.filter((l) => l.taken && l.supplementId === s.id).map((l) => l.date);
+    out[s.id] = computeStock(s.inventory!, s.pills ?? 1, s.schedule, taken, today);
+  }
+  return out;
 }
 
 // Deactivate a supplement (drops it from the active stack). When a date is given, its log

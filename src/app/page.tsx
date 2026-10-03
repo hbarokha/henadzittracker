@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import DailySummary    from "@/components/DailySummary";
 import AddFoodPanel    from "@/components/AddFoodPanel";
 import FoodLog,
-  { type LogEntry }   from "@/components/FoodLog";
+  { type LogEntry, type EntryPatch } from "@/components/FoodLog";
+import TdeeCard        from "@/components/TdeeCard";
+import WaterCard       from "@/components/WaterCard";
+import TodayStrip      from "@/components/TodayStrip";
 import WeeklyChart     from "@/components/WeeklyChart";
 import GoalsModal      from "@/components/GoalsModal";
 import ProfilePanel    from "@/components/ProfilePanel";
@@ -281,8 +284,29 @@ export default function Home() {
   // so the cache-backed trend charts re-fetch instead of showing stale data.
   const [garminRefreshKey, setGarminRefreshKey] = useState(0);
   const [globalLoading, setGlobalLoading] = useState(false);
+  // Bumped whenever the food log changes so the Recent tab re-reads what's frequent
+  const [logVersion, setLogVersion] = useState(0);
+  const [toast, setToast] = useState<{ id: number; msg: string; undo?: () => void } | null>(null);
 
   const isToday = selectedDate === todayIso;
+
+  function showToast(msg: string, undo?: () => void) {
+    const id = Date.now();
+    setToast({ id, msg, undo });
+    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 6000);
+  }
+
+  // Remember the tab across reloads (a refresh on Supplements used to bounce to Overview)
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem("henadzittracker:tab") as AppTab | null;
+      if (t && ["overview", "nutrition", "training", "supplements", "analysis"].includes(t)) setActiveTab(t);
+    } catch {}
+  }, []);
+  function changeTab(t: AppTab) {
+    setActiveTab(t);
+    try { localStorage.setItem("henadzittracker:tab", t); } catch {}
+  }
 
   useEffect(() => {
     setGoals(loadGoals());
@@ -322,19 +346,77 @@ export default function Home() {
   function goToday()   { setSelectedDate(todayIso); }
 
   async function addCustomFood(food: NutritionFood, mealCategory: MealCategory, quantity: number) {
-    await fetch("/api/log", {
+    const res = await fetch("/api/log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ customFood: food, date: selectedDate, quantity, mealCategory }),
     });
+    if (!res.ok) throw new Error(`Couldn't add (${res.status})`);
     await fetchLog();
+    setLogVersion((v) => v + 1);
     fetchStats();
   }
 
   async function removeFood(id: string) {
-    await fetch(`/api/log/${id}`, { method: "DELETE" });
+    const removed = entries.find((e) => e.id === id);
+    const res = await fetch(`/api/log/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) { showToast("Couldn't remove that — try again"); return; }
     setEntries((prev) => prev.filter((e) => e.id !== id));
     fetchStats();
+    setLogVersion((v) => v + 1);
+    if (removed?.food) {
+      const { food, quantity, mealCategory } = removed;
+      // Undo re-creates the entry with the same food values — no AI call, so the original
+      // numbers (including any hand edits) come back exactly.
+      showToast(`Removed ${food.name}`, async () => {
+        setToast(null);
+        await fetch("/api/log", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customFood: food, date: removed.date, quantity, mealCategory }),
+        });
+        await fetchLog(); fetchStats(); setLogVersion((v) => v + 1);
+      });
+    }
+  }
+
+  async function editEntry(id: string, patch: EntryPatch) {
+    const res = await fetch(`/api/log/${id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+    });
+    if (!res.ok) { showToast("Couldn't save the change — try again"); throw new Error("edit failed"); }
+    await fetchLog(); fetchStats(); setLogVersion((v) => v + 1);
+  }
+
+  async function saveMeal(name: string, mealCategory: MealCategory, group: LogEntry[]) {
+    const items = group.filter((e) => e.food).map((e) => ({ food: e.food, quantity: e.quantity }));
+    const res = await fetch("/api/meals", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, mealCategory, items }),
+    });
+    if (!res.ok) { showToast("Couldn't save the meal"); throw new Error("save failed"); }
+    setLogVersion((v) => v + 1);
+    showToast(`Saved “${name}” — find it under Recent`);
+  }
+
+  async function logSavedMeal(mealId: string, mealCategory: MealCategory) {
+    const res = await fetch("/api/meals", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "log", id: mealId, date: selectedDate, mealCategory }),
+    });
+    if (!res.ok) throw new Error(`Couldn't log (${res.status})`);
+    await fetchLog(); fetchStats(); setLogVersion((v) => v + 1);
+  }
+
+  async function copyPrevDay(): Promise<number> {
+    const res = await fetch("/api/log/copy", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: shiftDate(selectedDate, -1), to: selectedDate }),
+    });
+    if (!res.ok) throw new Error(`Couldn't copy (${res.status})`);
+    const { copied } = await res.json();
+    await fetchLog(); fetchStats(); setLogVersion((v) => v + 1);
+    if (copied > 0) showToast(`Copied ${copied} item${copied === 1 ? "" : "s"} from ${formatShort(shiftDate(selectedDate, -1))}`);
+    return copied;
   }
 
   function handleSaveGoals(g: Goals) { saveGoals(g); setGoals(g); }
@@ -346,6 +428,8 @@ export default function Home() {
   }
 
   async function disconnectGarmin() {
+    // One mis-tap on a header icon used to log you out of Garmin immediately
+    if (!window.confirm("Disconnect Garmin? You'll need to sign in again (and enter an MFA code) to reconnect.")) return;
     await fetch("/api/garmin/disconnect", { method: "POST" });
     setGarminStatus({ connected: false, username: null });
   }
@@ -549,7 +633,7 @@ export default function Home() {
         </div>
 
         {/* Tab bar */}
-        <TabBar active={activeTab} onChange={setActiveTab} />
+        <TabBar active={activeTab} onChange={changeTab} />
       </header>
 
       {/* ── Tab Content ─────────────────────────────────────────────────── */}
@@ -572,6 +656,12 @@ export default function Home() {
         {/* ── OVERVIEW ──────────────────────────────────────────────────── */}
         {activeTab === "overview" && (
           <div className="space-y-6">
+            {/* What's still left today — only for the live day */}
+            {isToday && (
+              <TodayStrip todayIso={todayIso} loggedToday={entries.length}
+                onGoSupplements={() => changeTab("supplements")} onGoNutrition={() => changeTab("nutrition")} />
+            )}
+
             {/* Quick nutrition status */}
             <section>
               <SectionHead label="Today at a Glance" />
@@ -701,11 +791,21 @@ export default function Home() {
               <SectionHead label="Food Log" />
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
                 <div className="lg:col-span-3">
-                  <FoodLog entries={entries} onRemove={removeFood} date={selectedDate} todayIso={todayIso} />
+                  <FoodLog entries={entries} onRemove={removeFood} onEdit={editEntry} onSaveMeal={saveMeal}
+                    onCopyPrevDay={copyPrevDay} date={selectedDate} todayIso={todayIso} />
                 </div>
                 <div className="lg:col-span-2 lg:sticky lg:top-28">
-                  <AddFoodPanel onAIAdd={addCustomFood} />
+                  <AddFoodPanel onAIAdd={addCustomFood} onLogSavedMeal={logSavedMeal} refreshKey={logVersion} />
                 </div>
+              </div>
+            </section>
+
+            {/* Water + measured TDEE */}
+            <section>
+              <SectionHead label="Hydration & Energy" />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                <WaterCard date={selectedDate} />
+                <TdeeCard todayIso={todayIso} goals={goals} onApplyCalories={(calories) => handleSaveGoals({ ...goals, calories })} />
               </div>
             </section>
 
@@ -757,6 +857,20 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* ── Toast (undo / confirmations) ────────────────────────────────── */}
+      <div aria-live="polite" className="fixed left-0 right-0 bottom-4 z-50 flex justify-center px-4 pointer-events-none">
+        {toast && (
+          <div className="pointer-events-auto flex items-center gap-3 rounded-xl px-4 py-2.5 text-sm shadow-lg max-w-md"
+            style={{ background: "var(--bg-high)", border: "1px solid var(--border-mid)", color: "var(--text)" }}>
+            <span className="truncate">{toast.msg}</span>
+            {toast.undo && (
+              <button onClick={toast.undo} className="shrink-0 min-h-[36px] px-2 text-xs font-bold"
+                style={{ color: "var(--amber)", fontFamily: "var(--font-mono)" }}>UNDO</button>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* ── Modals ──────────────────────────────────────────────────────── */}
       {showGoals && <GoalsModal goals={goals} onSave={handleSaveGoals} onClose={() => setShowGoals(false)} />}

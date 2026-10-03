@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { MealCategory } from "@/lib/db";
 
 interface DisplayFood {
@@ -20,9 +21,20 @@ export interface LogEntry {
   food:         DisplayFood | null;
 }
 
+export interface EntryPatch {
+  quantity?:     number;
+  mealCategory?: MealCategory;
+  food?: { name: string; serving: string; calories: number; protein: number; carbs: number; fat: number };
+}
+
 interface Props {
   entries:  LogEntry[];
   onRemove: (id: string) => void;
+  onEdit:   (id: string, patch: EntryPatch) => Promise<void>;
+  /** Save the entries of one meal slot as a named, re-loggable meal. */
+  onSaveMeal: (name: string, mealCategory: MealCategory, entries: LogEntry[]) => Promise<void>;
+  /** Copy the previous day's log onto this one. Resolves to the number of items copied. */
+  onCopyPrevDay: () => Promise<number>;
   date:     string;
   todayIso: string;
 }
@@ -61,8 +73,55 @@ function exportCSV(entries: LogEntry[], date: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
+const fieldStyle = { background: "var(--bg-raised)", border: "1px solid var(--border-mid)", color: "var(--text)" } as const;
+
+function CopyPrevButton({ onCopyPrevDay }: { onCopyPrevDay: () => Promise<number> }) {
+  const [state, setState] = useState<"idle" | "busy" | "empty" | "error">("idle");
+  return (
+    <button
+      disabled={state === "busy"}
+      onClick={async () => {
+        setState("busy");
+        try { setState((await onCopyPrevDay()) === 0 ? "empty" : "idle"); } catch { setState("error"); }
+      }}
+      className="text-xs font-medium min-h-[36px] px-2.5 rounded-lg disabled:opacity-50 whitespace-nowrap"
+      style={{ color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)", fontFamily: "var(--font-mono)" }}>
+      {state === "busy" ? "Copying…" : state === "empty" ? "Previous day was empty" : state === "error" ? "Failed — retry" : "↻ Copy previous day"}
+    </button>
+  );
+}
+
+export default function FoodLog({ entries, onRemove, onEdit, onSaveMeal, onCopyPrevDay, date, todayIso }: Props) {
   const isToday = date === todayIso;
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: "", serving: "", calories: "", protein: "", carbs: "", fat: "", quantity: "1", meal: "snack" as MealCategory });
+  const [saving, setSaving] = useState(false);
+  const [savingMeal, setSavingMeal] = useState<MealCategory | null>(null);
+  const [mealName, setMealName] = useState("");
+  const [savedFlash, setSavedFlash] = useState<MealCategory | null>(null);
+
+  function startEdit(e: LogEntry) {
+    const f = e.food;
+    setEditingId(e.id);
+    setDraft({
+      name: f?.name ?? "", serving: f?.serving ?? "",
+      calories: String(f?.calories ?? 0), protein: String(f?.protein ?? 0), carbs: String(f?.carbs ?? 0), fat: String(f?.fat ?? 0),
+      quantity: String(e.quantity), meal: e.mealCategory ?? "snack",
+    });
+  }
+
+  async function commitEdit(e: LogEntry) {
+    const num = (v: string) => Math.max(0, Number(v) || 0);
+    setSaving(true);
+    try {
+      await onEdit(e.id, {
+        quantity: Math.max(0.25, Number(draft.quantity) || 1),
+        mealCategory: draft.meal,
+        food: { name: draft.name, serving: draft.serving, calories: num(draft.calories), protein: num(draft.protein), carbs: num(draft.carbs), fat: num(draft.fat) },
+      });
+      setEditingId(null);
+    } finally { setSaving(false); }
+  }
 
   if (entries.length === 0) {
     return (
@@ -82,6 +141,7 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
         <p className="text-sm mt-1.5 max-w-xs leading-relaxed" style={{ color: "var(--text-muted)" }}>
           Describe a meal or upload a photo — AI will estimate the nutrition.
         </p>
+        <div className="mt-4"><CopyPrevButton onCopyPrevDay={onCopyPrevDay} /></div>
       </div>
     );
   }
@@ -97,8 +157,8 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
   return (
     <div className="space-y-3">
       {/* Log header */}
-      <div className="flex items-center justify-between px-1">
-        <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-1">
+        <div className="flex items-baseline gap-2 whitespace-nowrap">
           <span
             className="text-base font-semibold"
             style={{ fontFamily: "var(--font-display)", color: "var(--text)" }}
@@ -113,6 +173,7 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          <CopyPrevButton onCopyPrevDay={onCopyPrevDay} />
           <span
             className="text-sm tabular"
             style={{ fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}
@@ -165,13 +226,45 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
                   {label}
                 </span>
               </div>
-              <span
-                className="text-xs tabular"
-                style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}
-              >
-                {Math.round(groupCal)} kcal
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setSavingMeal(savingMeal === cat ? null : cat); setMealName(""); }}
+                  className="text-[11px] min-h-[32px] px-2 rounded-md"
+                  aria-expanded={savingMeal === cat}
+                  style={{ color: savedFlash === cat ? "var(--sage)" : "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                  title="Save these items as a meal you can log again in one tap">
+                  {savedFlash === cat ? "✓ Saved" : "☆ Save as meal"}
+                </button>
+                <span
+                  className="text-xs tabular"
+                  style={{ fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}
+                >
+                  {Math.round(groupCal)} kcal
+                </span>
+              </div>
             </div>
+
+            {savingMeal === cat && (
+              <form
+                className="flex gap-2 px-4 py-2.5"
+                style={{ borderBottom: "1px solid var(--border-dim)", background: "var(--bg-raised)" }}
+                onSubmit={async (ev) => {
+                  ev.preventDefault();
+                  if (!mealName.trim()) return;
+                  await onSaveMeal(mealName.trim(), cat, group);
+                  setSavingMeal(null); setSavedFlash(cat);
+                  setTimeout(() => setSavedFlash((c) => (c === cat ? null : c)), 2500);
+                }}>
+                <input autoFocus value={mealName} onChange={(ev) => setMealName(ev.target.value)} maxLength={80}
+                  placeholder={`Name this ${label.toLowerCase()}, e.g. "Usual oats"`} aria-label="Saved meal name"
+                  className="flex-1 min-w-0 min-h-[40px] px-3 rounded-lg text-sm" style={fieldStyle} />
+                <button type="submit" disabled={!mealName.trim()}
+                  className="px-3 min-h-[40px] rounded-lg text-xs font-semibold disabled:opacity-40"
+                  style={{ color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
+                  Save
+                </button>
+              </form>
+            )}
 
             {/* Entries */}
             {group.map((entry, idx) => {
@@ -182,8 +275,8 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
               const fat  = f ? Math.round(f.fat      * entry.quantity * 10) / 10 : 0;
 
               return (
+                <div key={entry.id}>
                 <div
-                  key={entry.id}
                   className="flex items-center gap-3 pl-4 pr-3 py-3 transition-colors"
                   style={{
                     borderBottom: idx < group.length - 1 ? "1px solid var(--border-dim)" : "none",
@@ -232,8 +325,20 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
                   </div>
 
                   <button
+                    onClick={() => (editingId === entry.id ? setEditingId(null) : startEdit(entry))}
+                    className="w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all"
+                    style={{ color: editingId === entry.id ? "var(--amber)" : "var(--text-dim)" }}
+                    aria-label={`Edit ${f?.name ?? "entry"}`} aria-expanded={editingId === entry.id}
+                    title="Edit">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l-2 5 5-2 8.5-8.5a2.5 2.5 0 00-3.536-3.536L9 13z" />
+                    </svg>
+                  </button>
+
+                  <button
                     onClick={() => onRemove(entry.id)}
-                    className="w-7 h-7 rounded flex items-center justify-center shrink-0 transition-all"
+                    aria-label={`Remove ${f?.name ?? "entry"}`}
+                    className="w-8 h-8 rounded flex items-center justify-center shrink-0 transition-all"
                     style={{ color: "var(--text-dim)" }}
                     onMouseEnter={e => {
                       e.currentTarget.style.color = "var(--coral)";
@@ -249,6 +354,54 @@ export default function FoodLog({ entries, onRemove, date, todayIso }: Props) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
+                </div>
+
+                {editingId === entry.id && (
+                  <form
+                    className="px-4 py-3 space-y-3"
+                    style={{ background: "var(--bg-raised)", borderLeft: `3px solid ${color}`, borderBottom: "1px solid var(--border-dim)" }}
+                    onSubmit={(ev) => { ev.preventDefault(); commitEdit(entry); }}>
+                    <p className="text-[10px]" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                      Nutrition values are for ONE serving; the quantity multiplies them.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="col-span-2 text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>Name
+                        <input value={draft.name} onChange={(ev) => setDraft((d) => ({ ...d, name: ev.target.value }))}
+                          className="w-full min-h-[40px] px-3 rounded-lg text-sm" style={fieldStyle} required />
+                      </label>
+                      <label className="col-span-2 text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>Serving
+                        <input value={draft.serving} onChange={(ev) => setDraft((d) => ({ ...d, serving: ev.target.value }))}
+                          className="w-full min-h-[40px] px-3 rounded-lg text-sm" style={fieldStyle} />
+                      </label>
+                      {([["calories", "Calories"], ["protein", "Protein g"], ["carbs", "Carbs g"], ["fat", "Fat g"]] as const).map(([k, l]) => (
+                        <label key={k} className="text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>{l}
+                          <input type="number" inputMode="decimal" min={0} step="any" value={draft[k]}
+                            onChange={(ev) => setDraft((d) => ({ ...d, [k]: ev.target.value }))}
+                            className="w-full min-h-[40px] px-3 rounded-lg text-sm tabular-nums" style={fieldStyle} />
+                        </label>
+                      ))}
+                      <label className="text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>Quantity
+                        <input type="number" inputMode="decimal" min={0.25} step={0.25} value={draft.quantity}
+                          onChange={(ev) => setDraft((d) => ({ ...d, quantity: ev.target.value }))}
+                          className="w-full min-h-[40px] px-3 rounded-lg text-sm tabular-nums" style={fieldStyle} />
+                      </label>
+                      <label className="text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>Meal
+                        <select value={draft.meal} onChange={(ev) => setDraft((d) => ({ ...d, meal: ev.target.value as MealCategory }))}
+                          className="w-full min-h-[40px] px-2 rounded-lg text-sm" style={fieldStyle}>
+                          {CATEGORY_ORDER.map((c) => <option key={c} value={c}>{MEAL_META[c].label}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <button type="button" onClick={() => setEditingId(null)} className="px-3 min-h-[40px] rounded-lg text-xs"
+                        style={{ color: "var(--text-muted)", border: "1px solid var(--border-mid)" }}>Cancel</button>
+                      <button type="submit" disabled={saving || !draft.name.trim()} className="px-4 min-h-[40px] rounded-lg text-xs font-semibold disabled:opacity-40"
+                        style={{ color: "var(--amber)", background: "var(--amber-dim)", border: "1px solid var(--amber-glow)" }}>
+                        {saving ? "Saving…" : "Save changes"}
+                      </button>
+                    </div>
+                  </form>
+                )}
                 </div>
               );
             })}

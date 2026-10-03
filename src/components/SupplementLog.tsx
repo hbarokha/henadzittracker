@@ -10,7 +10,10 @@ import {
   ScheduleEditor, ScheduleChip,
 } from "./supplements/shared";
 import MissingLabelsCard from "./supplements/MissingLabelsCard";
-import { type SupplementSchedule, DAILY, isScheduledOn, describeSchedule } from "@/lib/schedule";
+import { type SupplementSchedule, DAILY, isScheduledOn, describeSchedule, todayIsoLocal } from "@/lib/schedule";
+import type { StockStatus } from "@/lib/inventory";
+import { useInfoTip } from "@/components/InfoTip";
+import { TIP_STOCK } from "@/lib/widgetTips";
 import { IconPill } from "@/components/icons";
 import { fetchAiJson, describeFetchError } from "@/lib/aiFetch";
 
@@ -62,6 +65,9 @@ interface Props { date: string }
 export default function SupplementLog({ date }: Props) {
   const [items, setItems] = useState<SupplementWithLog[]>([]);
   const [adherence, setAdherence] = useState<Adherence | null>(null);
+  const [stock, setStock] = useState<Record<string, StockStatus>>({});
+  const stockTip = useInfoTip("supplement stock", TIP_STOCK);
+  const [bottle, setBottle] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingSupps, setLoadingSupps] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -101,9 +107,10 @@ export default function SupplementLog({ date }: Props) {
     setLoadingSupps(true);
     setLoadError(null);
     try {
-      const res = await fetch(`/api/supplements?date=${date}`);
+      const res = await fetch(`/api/supplements?date=${date}&today=${todayIsoLocal()}`);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
-      const body = await res.json() as { supplements: Supplement[]; log: SLog[]; adherence?: Adherence };
+      const body = await res.json() as { supplements: Supplement[]; log: SLog[]; adherence?: Adherence; stock?: Record<string, StockStatus> };
+      setStock(body.stock ?? {});
       const logMap = new Map(body.log.map((l) => [l.supplementId, l.taken]));
       setItems(body.supplements.map((s) => ({
         ...s,
@@ -173,6 +180,7 @@ export default function SupplementLog({ date }: Props) {
 
   function startEdit(s: SupplementWithLog) {
     setEditingId(s.id);
+    setBottle("");
     setEditForm({ name: s.name || "", dose: String(s.dose ?? ""), unit: s.unit, pills: String(s.pills ?? 1), timeOfDay: s.timeOfDay, ingredients: s.ingredients || "", schedule: s.schedule ?? DAILY });
     setExpandedId(null);
   }
@@ -193,6 +201,8 @@ export default function SupplementLog({ date }: Props) {
         timeOfDay: editForm.timeOfDay,
         ingredients: editForm.ingredients.trim(),
         schedule: editForm.schedule,
+        ...(bottle.trim() !== "" && Number.isFinite(Number(bottle))
+          ? { inventory: { count: Number(bottle), today: todayIsoLocal() } } : {}),
       }),
     });
     setEditSaving(false);
@@ -502,6 +512,35 @@ export default function SupplementLog({ date }: Props) {
       {/* ── Missing label ingredients ────────────────────────────────────── */}
       {items.length > 0 && !loadError && <MissingLabelsCard items={items} onSaved={load} />}
 
+      {/* ── Running low — the reorder nudge ───────────────────────────────── */}
+      {(() => {
+        const low = items.filter((s) => stock[s.id]?.low)
+          .sort((a, b) => (stock[a.id].daysLeft ?? 0) - (stock[b.id].daysLeft ?? 0));
+        if (!low.length) return null;
+        return (
+          <div className="mx-5 my-3 rounded-xl p-3" role="status"
+            style={{ background: "rgba(255,107,107,0.08)", border: "1px solid rgba(255,107,107,0.25)" }}>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <p className="text-xs font-semibold" style={{ color: "var(--coral)", fontFamily: "var(--font-display)" }}>
+                Time to reorder ({low.length})
+              </p>
+              {stockTip.button}
+            </div>
+            {stockTip.panel}
+            <ul className="space-y-1">
+              {low.map((s) => (
+                <li key={s.id} className="text-xs flex justify-between gap-2" style={{ color: "var(--text-muted)" }}>
+                  <span className="truncate">{s.name}</span>
+                  <span className="shrink-0" style={{ fontFamily: "var(--font-mono)", color: "var(--coral)" }}>
+                    {stock[s.id].remaining === 0 ? "empty" : `${stock[s.id].remaining} pills · ~${stock[s.id].daysLeft}d`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })()}
+
       {/* ── Supplement list ──────────────────────────────────────────────── */}
       {grouped.map((g) => (
         <div key={g.key} style={g.muted ? { opacity: 0.6 } : undefined}>
@@ -554,6 +593,13 @@ export default function SupplementLog({ date }: Props) {
                     {s.brand ? <span className="uppercase tracking-wide" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{s.brand}</span> : null}
                     <span>{s.pills && s.pills > 1 ? `${s.pills} × ` : ""}{s.dose} {s.unit}</span>
                     <ScheduleChip schedule={s.schedule} />
+                    {stock[s.id] && (
+                      <span className="px-1.5 py-0.5 rounded"
+                        style={{ fontSize: "0.6rem", background: "var(--bg-raised)", color: stock[s.id].low ? "var(--coral)" : "var(--text-dim)" }}
+                        title={`${stock[s.id].remaining} pills left${stock[s.id].runOutDate ? ` · runs out ${stock[s.id].runOutDate}` : ""}`}>
+                        {stock[s.id].remaining === 0 ? "empty" : stock[s.id].daysLeft == null ? `${stock[s.id].remaining} left` : `~${stock[s.id].daysLeft}d left`}
+                      </span>
+                    )}
                     {adherence && (
                       <span
                         className="px-1.5 py-0.5 rounded"
@@ -720,6 +766,31 @@ export default function SupplementLog({ date }: Props) {
                       value={editForm.schedule}
                       onChange={(schedule) => setEditForm((f) => ({ ...f, schedule }))}
                     />
+                  </div>
+                  {/* Bottle stock — drives the days-left badge and the reorder nudge */}
+                  <div className="space-y-1">
+                    <p className="text-[9px] uppercase tracking-wide"
+                      style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>Pills in the bottle right now</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number" inputMode="numeric" min="0" value={bottle}
+                        onChange={(e) => setBottle(e.target.value)}
+                        placeholder={stock[s.id] ? `${stock[s.id].remaining} counted — type to reset` : "e.g. 90"}
+                        aria-label="Pills in the bottle right now"
+                        className="flex-1 rounded-lg px-2 py-1.5 text-sm focus:outline-none"
+                        style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)", color: "var(--text)" }}
+                      />
+                      {s.inventory && (
+                        <button type="button" className="text-[11px] px-2 min-h-[32px]" style={{ color: "var(--text-dim)" }}
+                          onClick={async () => {
+                            await fetch("/api/supplements", { method: "POST", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "update", id: s.id, inventory: null }) });
+                            setEditingId(null); await load();
+                          }}>
+                          Stop tracking
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {/* Label ingredients — the only source the AI is allowed to use when
                       judging overlaps inside a multi-ingredient product. */}

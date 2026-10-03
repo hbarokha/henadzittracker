@@ -6,8 +6,9 @@ import type { MealCategory } from "@/lib/db";
 import AITextTab     from "./AITextTab";
 import AIPhotoTab    from "./AIPhotoTab";
 import AIBarcodeTab  from "./AIBarcodeTab";
+import QuickAddTab   from "./QuickAddTab";
 
-type Tab = "text" | "photo" | "barcode";
+type Tab = "recent" | "text" | "photo" | "barcode";
 
 const MEAL_CATS: { id: MealCategory; icon: string; label: string; color: string }[] = [
   { id: "breakfast", icon: "🌅", label: "Breakfast", color: "var(--amber)"  },
@@ -27,10 +28,13 @@ function suggestMeal(): MealCategory {
 
 interface Props {
   onAIAdd: (food: NutritionFood, mealCategory: MealCategory, quantity: number) => Promise<void>;
+  onLogSavedMeal: (mealId: string, mealCategory: MealCategory) => Promise<void>;
+  /** Changes whenever the log changes — keeps the Recent tab current. */
+  refreshKey: number;
 }
 
-export default function AddFoodPanel({ onAIAdd }: Props) {
-  const [tab,  setTab]  = useState<Tab>("text");
+export default function AddFoodPanel({ onAIAdd, onLogSavedMeal, refreshKey }: Props) {
+  const [tab,  setTab]  = useState<Tab>("recent");
   const [meal, setMeal] = useState<MealCategory>("breakfast");
 
   useEffect(() => { setMeal(suggestMeal()); }, []);
@@ -93,6 +97,7 @@ export default function AddFoodPanel({ onAIAdd }: Props) {
       {/* Input method tabs */}
       <div className="flex p-2 gap-1.5" style={{ borderBottom: "1px solid var(--border)" }}>
         {([
+          { id: "recent",  icon: "↻",  label: "Recent"   },
           { id: "text",    icon: "✨", label: "Describe" },
           { id: "photo",   icon: "📷", label: "Photo"    },
           { id: "barcode", icon: "▦",  label: "Barcode"  },
@@ -116,6 +121,15 @@ export default function AddFoodPanel({ onAIAdd }: Props) {
         })}
       </div>
 
+      {tab === "recent"  && (
+        <QuickAddTab
+          onAddFood={(food, qty) => onAIAdd(food, meal, qty)}
+          onLogMeal={(id) => onLogSavedMeal(id, meal)}
+          refreshKey={refreshKey}
+          onEmpty={() => setTab((t) => (t === "recent" ? "text" : t))}
+          accentColor={activeMealColor}
+        />
+      )}
       {tab === "text"    && <AITextTab    onAdd={(food, qty) => onAIAdd(food, meal, qty)} accentColor={activeMealColor} />}
       {tab === "photo"   && <AIPhotoTab   onAdd={(food, qty) => onAIAdd(food, meal, qty)} />}
       {tab === "barcode" && <AIBarcodeTab onAdd={(food, qty) => onAIAdd(food, meal, qty)} accentColor={activeMealColor} />}

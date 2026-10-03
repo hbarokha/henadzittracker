@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import type { Goals } from "@/lib/goals";
+import { loadReminders, saveReminders, type ReminderSettings, type ReminderSlot } from "@/lib/reminders";
+import { TIME_OF_DAY_LABELS, TIME_OF_DAY_ICONS } from "@/lib/timeOfDay";
 
 interface Props {
   goals:   Goals;
@@ -16,8 +18,28 @@ const FIELDS: { key: keyof Goals; label: string; unit: string; min: number; max:
   { key: "fat",      label: "Fat",      unit: "g",    min: 10,   max: 300,  color: "var(--coral)" },
 ];
 
+const SLOTS: ReminderSlot[] = ["morning", "afternoon", "evening", "bedtime"];
+
 export default function GoalsModal({ goals, onSave, onClose }: Props) {
   const [draft, setDraft] = useState<Goals>({ ...goals });
+  const [rem, setRem] = useState<ReminderSettings>(() => loadReminders());
+  const [permNote, setPermNote] = useState<string | null>(null);
+
+  async function toggleReminders(on: boolean) {
+    setPermNote(null);
+    if (on) {
+      if (typeof Notification === "undefined") {
+        setPermNote("This browser can't show notifications. On iPhone, add the app to your Home Screen first.");
+        return;
+      }
+      const perm = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (perm !== "granted") {
+        setPermNote("Notifications are blocked for this site — allow them in the browser's site settings, then try again.");
+        return;
+      }
+    }
+    setRem((r) => ({ ...r, enabled: on }));
+  }
 
   function set(key: keyof Goals, val: string) {
     const n = parseInt(val, 10);
@@ -32,7 +54,7 @@ export default function GoalsModal({ goals, onSave, onClose }: Props) {
         onClick={onClose}
       />
       <div
-        className="relative w-full max-w-sm rounded-xl overflow-hidden"
+        className="relative w-full max-w-sm rounded-xl overflow-hidden max-h-[92vh] overflow-y-auto"
         style={{ background: "var(--bg-surface)", border: "1px solid var(--border-mid)" }}
       >
         {/* Header */}
@@ -110,6 +132,39 @@ export default function GoalsModal({ goals, onSave, onClose }: Props) {
               </div>
             </div>
           ))}
+
+          {/* Supplement reminders — per device */}
+          <div className="pt-4" style={{ borderTop: "1px solid var(--border)" }}>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div>
+                <p className="text-[9px] tracking-[0.18em] uppercase" style={{ fontFamily: "var(--font-mono)", color: "#a78bfa" }}>
+                  Supplement reminders
+                </p>
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-dim)" }}>
+                  Fires while the app is open or installed and running in the background — a fully closed app can&apos;t be woken.
+                </p>
+              </div>
+              <button role="switch" aria-checked={rem.enabled} onClick={() => toggleReminders(!rem.enabled)}
+                className="shrink-0 w-11 h-6 rounded-full relative transition-colors"
+                aria-label="Supplement reminders"
+                style={{ background: rem.enabled ? "var(--amber)" : "var(--bg-high)", border: "1px solid var(--border-mid)" }}>
+                <span className="absolute top-0.5 w-5 h-5 rounded-full transition-all"
+                  style={{ left: rem.enabled ? 20 : 2, background: rem.enabled ? "#000" : "var(--text-muted)" }} />
+              </button>
+            </div>
+            {permNote && <p className="text-[11px] mb-2" role="alert" style={{ color: "var(--coral)" }}>{permNote}</p>}
+            <div className="grid grid-cols-2 gap-2">
+              {SLOTS.map((slot) => (
+                <label key={slot} className="text-[10px] space-y-1" style={{ color: "var(--text-muted)" }}>
+                  {TIME_OF_DAY_ICONS[slot]} {TIME_OF_DAY_LABELS[slot]}
+                  <input type="time" value={rem.times[slot]}
+                    onChange={(e) => setRem((r) => ({ ...r, times: { ...r.times, [slot]: e.target.value || r.times[slot] } }))}
+                    className="w-full min-h-[40px] px-3 rounded-lg text-sm"
+                    style={{ background: "var(--bg-raised)", color: "var(--text)", border: "1px solid var(--border-mid)", fontFamily: "var(--font-mono)" }} />
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Actions */}
@@ -131,7 +186,7 @@ export default function GoalsModal({ goals, onSave, onClose }: Props) {
             Cancel
           </button>
           <button
-            onClick={() => { onSave(draft); onClose(); }}
+            onClick={() => { saveReminders(rem); onSave(draft); onClose(); }}
             className="flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all"
             style={{
               fontFamily: "var(--font-display)",

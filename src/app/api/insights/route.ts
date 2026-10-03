@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { FALLBACK_BETA, REFUSAL_FALLBACKS } from "@/lib/claudeFallback";
-import { loadProfile } from "@/lib/profile";
+import { loadProfile, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getTakenDatesBySupplement } from "@/lib/supplements";
 import { getTagDatesInRange, JOURNAL_TAGS } from "@/lib/journal";
 import { buildSnapshots, shiftDate, dateRange } from "@/lib/summary/snapshots";
@@ -205,7 +205,7 @@ export async function GET(req: Request) {
   // Narration is best-effort — the deterministic table is always returned
   let narrative: string | null = null;
   let suggestions: string[] = [];
-  const prompt = correlationTable(correlations, profile?.goal);
+  const prompt = correlationTable(correlations, profile?.goal) + coachNotesLine(profile);
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       ({ narrative, suggestions } = await narrateWithClaude(prompt, process.env.ANTHROPIC_API_KEY));

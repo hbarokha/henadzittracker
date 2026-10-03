@@ -250,3 +250,34 @@ export const TIP_LABS: InfoTipContent = {
   ],
   caveat: "A single panel is a snapshot taken under one set of conditions — fasting, hydration, recent training and time of day all move these numbers. Interpretation belongs with your doctor, not with this app.",
 };
+
+// ── Nutrition: water, adaptive TDEE, supplement stock, lab trends ────────────
+
+export const TIP_WATER: InfoTipContent = {
+  what: "How much water you've logged today against a daily target.",
+  how: "Each tap adds to a running total for the day (stored per date). The target is 35 ml per kg of your profile weight, rounded to the nearest 250 ml (2,500 ml if no profile is set). The 7 dots show the last seven days against that same target.",
+  caveat: "It counts only what you tap in — coffee, tea and the water inside food are not added automatically, and the 35 ml/kg target is a general rule of thumb, not advice tuned to your training or climate.",
+};
+
+export const TIP_TDEE: InfoTipContent = {
+  what: "Your real daily calorie burn, measured from what you ate against what your weight did — not a formula.",
+  how: "Over the last 28 days (not counting today): average intake across the days you logged food, minus the weight trend converted to calories. The trend is a straight-line fit through your weigh-ins; each kg of change is counted as 7,700 kcal. So eating 2,400 kcal/day while the trend falls 0.3 kg/week means TDEE ≈ 2,400 + 0.3 × 7,700 ÷ 7 ≈ 2,730. Computed in code — the AI is not involved.",
+  reads: [
+    "The ± margin comes from how scattered your weigh-ins are around the fitted line; it shrinks as you weigh in more often over a longer span.",
+    "Confidence is high at 18+ logged days, 8+ weigh-ins over 18+ days and a margin under 250 kcal; low when any of those is thin.",
+    "The suggested calorie goal is this TDEE plus or minus the pace you pick (500 kcal/day ≈ 0.45 kg/week). Nothing changes until you press Apply.",
+  ],
+  caveat: "Days you didn't log are skipped, so under-logging (forgotten snacks, drinks) makes TDEE read too LOW. Water-weight swings from a salty meal or a hard session add noise that only more weigh-ins average out. Needs 10+ logged days and 4+ weigh-ins spanning 10+ days before it will show a number.",
+};
+
+export const TIP_STOCK: InfoTipContent = {
+  what: "How many days of each supplement you have left, from the pill count you entered.",
+  how: "You enter how many pills are in the bottle (on a given day). Pills taken since then are subtracted — each check-off uses the entry's pills-per-day. The days-left figure then walks forward day by day through the supplement's own schedule (daily, certain weekdays, every N days, on/off cycle) until the pills run out.",
+  caveat: "A dose you took but forgot to check off still sits in the bottle on paper, so the real run-out date can be earlier. Re-enter the count after a bottle change or a stock-take.",
+};
+
+export const TIP_LAB_TREND: InfoTipContent = {
+  what: "One marker across all your saved blood panels, with its reference and optimal ranges shaded.",
+  how: "Each point is the value exactly as the lab reported it, converted to the marker's main unit so panels from different labs line up. The green band is the optimal range, the wider grey band the lab reference range.",
+  caveat: "Two points are a difference, not a trend. Different labs use different assays and ranges, so small moves between panels can be method noise.",
+};

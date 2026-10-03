@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getActivityNames, resolveActivityName } from "@/lib/activityNames";
 import { createHash } from "crypto";
 import { getAllEntries } from "@/lib/db";
-import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
+import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceStats, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule, isScheduledOn } from "@/lib/schedule";
 import { getRecentWeightEntries } from "@/lib/weight-db";
@@ -262,7 +262,7 @@ Local time: ${timeStr} | ${bracketLabel[bracket]} | Day ~${dayPct}% complete | B
 ## USER PROFILE
 ${profile
   ? `Age: ${profile.age} | Sex: ${profile.sex} | Height: ${profile.heightCm} cm | Weight: ${profile.weightKg} kg
-BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : "\nHealth goal: not specified"}`
+BMR: ${bmr} kcal/day | TDEE: ${tdee} kcal/day | Activity level: ${profile.activityLevel}${profile.goal ? `\nHealth goal: ${profile.goal}` : "\nHealth goal: not specified"}${coachNotesLine(profile)}`
   : "Not configured — base analysis on Garmin data only"}
 
 ## FITNESS METRICS (Garmin account-level)

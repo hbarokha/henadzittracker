@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import CameraModal from "./CameraModal";
+import LabTrendChart from "./LabTrendChart";
 import {
   BIOMARKERS, BIOMARKERS_BY_KEY, LAB_CATEGORY_LABELS, describeRange,
   type LabCategory, type LabPanel, type LatestMarker, type MarkerStatus,
@@ -415,6 +416,8 @@ export default function LabResults() {
               </span>
             )}
           </div>
+
+          {expanded && panels.length > 0 && <LabTrendChart panels={panels} />}
 
           {expanded && panels.length > 0 && (
             <div className="pt-2 space-y-1" style={{ borderTop: "1px solid var(--border-dim)" }}>

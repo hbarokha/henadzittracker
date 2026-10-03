@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import PwaRegister from "@/components/PwaRegister";
 import { Bebas_Neue, Syne, DM_Sans, DM_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -34,8 +35,14 @@ export const metadata: Metadata = {
   title: "HenadziTracker",
   description: "Daily health & nutrition tracker",
   icons: {
-    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>",
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: "/apple-touch-icon.png",
   },
+  appleWebApp: { capable: true, title: "Tracker", statusBarStyle: "black-translucent" },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0c0a08",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -43,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${bebasNeue.variable} ${syne.variable} ${dmSans.variable} ${dmMono.variable}`}>
       <body className="min-h-screen antialiased">
         {children}
+        <PwaRegister />
       </body>
     </html>
   );
