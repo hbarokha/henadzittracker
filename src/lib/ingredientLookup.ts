@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { FALLBACK_BETA, REFUSAL_FALLBACKS, echoableContent } from "@/lib/claudeFallback";
 
 /**
  * Grounded label-ingredient lookup for branded supplement products.
@@ -13,7 +14,7 @@ import Anthropic from "@anthropic-ai/sdk";
  * Returns null when the key is unset, so callers degrade to "NOT RECORDED".
  */
 
-const MODEL = process.env.ANTHROPIC_INGREDIENTS_MODEL ?? "claude-opus-5";
+const MODEL = process.env.ANTHROPIC_INGREDIENTS_MODEL ?? "claude-opus-5-5";
 const MAX_CONTINUATIONS = 4;
 
 export interface IngredientLookup {
@@ -76,18 +77,20 @@ export async function lookupIngredients(
   if (!apiKey) return null;
 
   const client = new Anthropic({ apiKey });
-  const convo: Anthropic.MessageParam[] = [
+  const convo: Anthropic.Beta.Messages.BetaMessageParam[] = [
     { role: "user", content: `Product: ${query}` },
   ];
   // Every page the search actually opened — reported even on a found=false result,
   // so a wrong-looking answer can be traced to what the model read.
   const sources: string[] = [];
 
-  let msg: Anthropic.Message | null = null;
+  let msg: Anthropic.Beta.Messages.BetaMessage | null = null;
   for (let i = 0; i <= MAX_CONTINUATIONS; i++) {
-    msg = await client.messages.create(
+    msg = await client.beta.messages.create(
       {
         model: MODEL,
+        betas: [FALLBACK_BETA],
+        fallbacks: REFUSAL_FALLBACKS,
         max_tokens: 4000,
         thinking: { type: "adaptive" },
         // A lookup, not a reasoning task — low effort keeps it inside the request budget.
@@ -112,7 +115,7 @@ export async function lookupIngredients(
 
     // The server-side search loop hit its iteration cap — re-send to resume.
     if (msg.stop_reason !== "pause_turn") break;
-    convo.push({ role: "assistant", content: msg.content });
+    convo.push({ role: "assistant", content: echoableContent(msg.content) });
   }
 
   if (!msg) return null;
@@ -121,7 +124,7 @@ export async function lookupIngredients(
   }
 
   const text = msg.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
   const parsed = parseResult(text);

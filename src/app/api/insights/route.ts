@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import { FALLBACK_BETA, REFUSAL_FALLBACKS } from "@/lib/claudeFallback";
 import { loadProfile } from "@/lib/profile";
 import { getAllSupplements, getTakenDatesBySupplement } from "@/lib/supplements";
 import { getTagDatesInRange, JOURNAL_TAGS } from "@/lib/journal";
@@ -69,13 +70,15 @@ function correlationTable(correlations: FactorCorrelation[], goal: string | unde
   return `${goal ? `User health goal: ${goal}\n\n` : ""}Correlations over the last ${WINDOW_DAYS} days (factor day vs next-day metric):\n${lines.join("\n")}`;
 }
 
-const CLAUDE_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-opus-4-8";
+const CLAUDE_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-sonnet-5-5";
 const NARRATION_TIMEOUT_MS = 60_000; // stay well under the SWA gateway limit
 
 async function narrateWithClaude(prompt: string, apiKey: string): Promise<{ narrative: string; suggestions: string[] }> {
   const client = new Anthropic({ apiKey });
-  const stream = client.messages.stream({
+  const stream = client.beta.messages.stream({
     model: CLAUDE_MODEL,
+    betas: [FALLBACK_BETA],
+    fallbacks: REFUSAL_FALLBACKS,
     max_tokens: 2000,
     thinking: { type: "adaptive" },
     output_config: {
@@ -100,8 +103,10 @@ async function narrateWithClaude(prompt: string, apiKey: string): Promise<{ narr
     clearTimeout(timer!);
   }
   if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+  const text = msg.content
+    .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
   if (!text) throw new Error("Empty Claude response");
   return JSON.parse(text);
 }

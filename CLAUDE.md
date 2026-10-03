@@ -121,7 +121,7 @@ the official developer program is currently suspended as of 2024).
 - **Precomputed trends**: server computes this-week-vs-prior-week deltas (sleep score, HRV, resting HR, steps, stress, calories, workouts, training load) and month momentum (last 15 days vs first 15) — Gemini cites deltas instead of inferring trends
 - **Per-day 7-day breakdown table** (food/sleep/HRV/steps/stress/workouts per date) lets Gemini spot day-level patterns averages erase
 - **Coach memory**: `summary-cache/latest.json` stores the most recent analysis; its scores, bio-age, and recommendations are fed back into the next prompt with continuity rules (scores/bio-age only move when a cited metric changed; explicit follow-up on previous recommendations)
-- **Claude (Anthropic) is the primary provider** — the summary route calls `claude-opus-4-8` (override via `ANTHROPIC_SUMMARY_MODEL`, e.g. `claude-sonnet-5`) with adaptive thinking + structured output (`output_config.format` JSON schema) via the `@anthropic-ai/sdk`, streamed to avoid timeouts, in **fast mode** (`speed: "fast"`, beta `fast-mode-2026-02-01`) when the model is Opus 4.7/4.8 — up to 2.5× output speed at premium pricing, disable via `ANTHROPIC_SUMMARY_FAST=0`, fast-mode 429 retries once at standard speed within the same deadline; **Gemini is the automatic fallback** when `ANTHROPIC_API_KEY` is unset or the Claude call fails. Gemini path keeps `responseSchema` + `temperature: 0.2`, retry-with-backoff on 429/5xx, then `gemini-2.5-flash-lite`. Only the summary uses Claude; all other AI routes (food text/photo/barcode, supplements) remain on Gemini
+- **Claude (Anthropic) is the primary provider** — the summary route calls `claude-sonnet-5-5` (override via `ANTHROPIC_SUMMARY_MODEL`, e.g. `claude-opus-5-5`) with adaptive thinking + structured output (`output_config.format` JSON schema) via the `@anthropic-ai/sdk`, streamed to avoid timeouts, in **fast mode** (`speed: "fast"`, beta `fast-mode-2026-02-01`) when the model is Opus 5.5/5/4.8 (needs fast mode enabled on the account; this one has a limit of 0) — up to 2.5× output speed at premium pricing, disable via `ANTHROPIC_SUMMARY_FAST=0`, fast-mode 429 retries once at standard speed within the same deadline; **Gemini is the automatic fallback** when `ANTHROPIC_API_KEY` is unset or the Claude call fails. Every Claude call in the app (summary, narration, chat, label lookup) sends `fallbacks: "default"` (beta `server-side-fallback-2026-07-01`, `lib/claudeFallback.ts`) so a safety-classifier refusal is re-run server-side on another model instead of surfacing as a decline. Gemini path keeps `responseSchema` + `temperature: 0.2`, retry-with-backoff on 429/5xx, then `gemini-2.5-flash-lite`. Only the summary uses Claude; all other AI routes (food text/photo/barcode, supplements) remain on Gemini
 - **Data-coverage badges**: server returns deterministic 7-day coverage counts (food/sleep/steps/HRV) rendered under the panel header — missing data is visible, not just caveated by the AI
 - Single snapshot pass over the 30-day window (today/week/prior-week/month-halves are slices) — no duplicate cache reads
 - Manual ↺ Refresh button available to force a fresh generation at any time
@@ -157,7 +157,7 @@ the official developer program is currently suspended as of 2024).
 
 ### Chat With Your Health Data
 - Conversational panel on the Overview tab — ask ad-hoc questions ("why was my HRV terrible on Tuesday?", "am I hitting my protein goal?")
-- `POST /api/ai/chat` runs Claude (`claude-opus-4-8` default, `ANTHROPIC_CHAT_MODEL` override) with **tool use** in a manual agentic loop (max 6 tool iterations, 100 s deadline with stream abort to stay under the Azure SWA gateway timeout)
+- `POST /api/ai/chat` runs Claude (`claude-opus-5-5` default, `ANTHROPIC_CHAT_MODEL` override) with **tool use** in a manual agentic loop (max 6 tool iterations, 100 s deadline with stream abort to stay under the Azure SWA gateway timeout)
 - Tools read the existing caches only — no live Garmin calls, no writes: `get_day_data(date, sections)` (any Garmin cache section + food log + supplement checklist), `get_range_summary(start,end)` (aggregates + compact per-day rows, ≤31 days), `get_profile()`
 - Claude-only feature (tool use is the point) — requires `ANTHROPIC_API_KEY`; adaptive thinking, effort `low` for interactive latency
 - Client keeps the conversation in component state and sends the full history each turn; starter-question chips, NEW CHAT reset
@@ -196,7 +196,7 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 | Styling     | Tailwind CSS 3                                      |
 | Font        | Bebas Neue / Syne / DM Sans / DM Mono (Google Fonts via next/font) |
 | Persistence | JSON file locally; Azure Blob Storage in production  |
-| AI (summary)| Claude (`@anthropic-ai/sdk`, default `claude-opus-4-8`) — Gemini fallback |
+| AI (summary)| Claude (`@anthropic-ai/sdk`, default `claude-sonnet-5-5`; chat + label lookup `claude-opus-5-5`) — Gemini fallback |
 | AI (other)  | Gemini 2.5 Flash (REST API) — food text/photo/barcode, supplements |
 | Garmin      | Unofficial Garmin Connect API (`garmin-connect` npm + MFA patch) |
 | Runtime     | Node.js (via Next.js API routes)                    |
@@ -207,12 +207,12 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 |-----------------------------------|----------------------------------------------------------------|
 | `GEMINI_API_KEY`                  | Google Gemini API key — food/supplement AI + summary fallback  |
 | `ANTHROPIC_API_KEY`               | Anthropic (Claude) key — primary AI health summary provider (optional; falls back to Gemini) |
-| `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary + correlation narration (default `claude-opus-4-8`; e.g. `claude-sonnet-5`) |
+| `ANTHROPIC_SUMMARY_MODEL`         | Claude model for the summary + correlation narration (default `claude-sonnet-5-5`; e.g. `claude-opus-5-5`) |
 | `ANTHROPIC_SUMMARY_TIMEOUT_MS`    | TOTAL time budget for the summary AI call — Claude attempt + Gemini fallback share one deadline (default `70000`ms, Claude gets the budget minus ~22s Gemini reserve; keep ≤ ~80s in production to stay under Azure SWA's ~100s gateway limit) |
 | `ANTHROPIC_SUMMARY_EFFORT`        | Claude thinking effort for the summary (`low`/`medium`/`high`, default `medium`) — `high` frequently exceeds the production time budget; leave unset in prod |
-| `ANTHROPIC_SUMMARY_FAST`          | Fast mode for the Claude summary (default on when the model is Opus 4.7/4.8) — up to 2.5× output speed at premium token pricing; `0` disables. Fast-mode 429 retries once at standard speed |
-| `ANTHROPIC_CHAT_MODEL`            | Claude model for the health-data chat (default `claude-opus-4-8`)  |
-| `ANTHROPIC_INGREDIENTS_MODEL`     | Claude model for the grounded supplement-label lookup (default `claude-opus-5`) — uses the `web_search` server tool |
+| `ANTHROPIC_SUMMARY_FAST`          | Fast mode for the Claude summary (default on when the model is Opus 5.5/5/4.8; requires fast mode on the account) — up to 2.5× output speed at premium token pricing; `0` disables. Fast-mode 429 retries once at standard speed |
+| `ANTHROPIC_CHAT_MODEL`            | Claude model for the health-data chat (default `claude-opus-5-5`)  |
+| `ANTHROPIC_INGREDIENTS_MODEL`     | Claude model for the grounded supplement-label lookup (default `claude-opus-5-5`) — uses the `web_search` server tool |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage connection string (empty = local fs mode)   |
 | `AZURE_STORAGE_CONTAINER`         | Blob container name (default: `henadzittracker`)                    |
 
@@ -323,6 +323,7 @@ src/
     storage.ts                      Dual-mode persistence — local fs or Azure Blob Storage
     heartbeat.ts                    heartbeatJson() — streams whitespace every 5s so long AI routes survive Azure SWA's ~45s gateway kill
     geminiCall.ts                   callGeminiJSON() — ONE retry/deadline policy for every Gemini route: bounded attempts, shared wall-clock budget, 429/5xx ladder, flash-lite last rung
+    claudeFallback.ts               Server-side refusal fallback shared by every Claude call — `fallbacks: "default"` + its beta header, and echoableContent() for tool loops after a mid-output fallback
     aiFetch.ts                      fetchAiJson() + describeFetchError() — client calling convention for the AI routes: AbortController ceiling, gateway-HTML-safe parse, in-body error check (client-safe)
     ingredientLookup.ts             lookupIngredients() — Claude + web_search server tool reads a branded product's label panel off a cited page; no source ⇒ no ingredients
     ingredientLedger.ts             Parses recorded label panels into per-nutrient daily totals (formatIngredientLedger + TOP_UP_RULES) so the AI doses on top of what the stack already supplies; needsLabel() drives the missing-label nudge

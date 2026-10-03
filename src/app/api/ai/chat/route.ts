@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { FALLBACK_BETA, REFUSAL_FALLBACKS, echoableContent } from "@/lib/claudeFallback";
 import { getAllEntries } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE } from "@/lib/profile";
 import { getDailyView } from "@/lib/supplements";
@@ -14,7 +15,7 @@ import { readGarminCache, dateRange, buildSnapshots, summarizePeriod } from "@/l
 // read cached JSON — no live Garmin calls, no writes. Claude-only feature (no
 // Gemini fallback — tool use is the whole point).
 
-const CHAT_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-opus-4-8";
+const CHAT_MODEL = process.env.ANTHROPIC_CHAT_MODEL || "claude-opus-5-5";
 const MAX_TOOL_ITERATIONS = 6;
 // Azure SWA's gateway kills silent API requests after ~45s ("Backend call failure").
 // The response is heartbeat-streamed (see the bottom of POST) so the connection stays
@@ -26,7 +27,7 @@ const GARMIN_SECTIONS = [
   "spo2", "trainingstatus", "bloodpressure", "bodycomp", "usermetrics",
 ] as const;
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.Beta.Messages.BetaTool[] = [
   {
     name: "get_day_data",
     description:
@@ -182,7 +183,7 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
 - You are not a doctor; for medical concerns recommend consulting a professional, but don't append that disclaimer to routine data questions.`;
 
   const client = new Anthropic({ apiKey });
-  const convo: Anthropic.MessageParam[] = messages.map((m) => ({ role: m.role, content: m.content }));
+  const convo: Anthropic.Beta.Messages.BetaMessageParam[] = messages.map((m) => ({ role: m.role, content: m.content }));
   const deadline = Date.now() + DEADLINE_MS;
 
   // The agentic loop runs inside runChat(); its result is delivered over a
@@ -193,8 +194,10 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
       const remaining = deadline - Date.now();
       if (remaining < 5_000) throw new Error("Chat took too long — try a narrower question");
 
-      const stream = client.messages.stream({
+      const stream = client.beta.messages.stream({
         model: CHAT_MODEL,
+        betas: [FALLBACK_BETA],
+        fallbacks: REFUSAL_FALLBACKS,
         max_tokens: 4000,
         thinking: { type: "adaptive" },
         // Interactive chat over small JSON payloads — low effort keeps latency inside
@@ -212,7 +215,7 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
           reject(new Error("Chat took too long — try a narrower question"));
         }, remaining);
       });
-      let msg: Anthropic.Message;
+      let msg: Anthropic.Beta.Messages.BetaMessage;
       try {
         msg = await Promise.race([stream.finalMessage(), timeout]);
       } finally {
@@ -224,16 +227,19 @@ You answer questions about the user's own logged data: Garmin metrics (sleep, HR
 
       if (msg.stop_reason !== "tool_use") {
         const reply = msg.content
-          .filter((b): b is Anthropic.TextBlock => b.type === "text")
+          .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === "text")
           .map((b) => b.text)
           .join("");
         return { reply: reply || "I couldn't produce an answer — try rephrasing." };
       }
 
       // Execute all requested tools, return results in ONE user message
-      const toolUses = msg.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      convo.push({ role: "assistant", content: msg.content });
-      const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
+      // After a refusal fallback, only the fallback model's tool calls are live — the
+      // declined model's calls before the boundary are neither echoed nor executed.
+      const turn = echoableContent(msg.content);
+      const toolUses = turn.filter((b): b is Anthropic.Beta.Messages.BetaToolUseBlockParam => b.type === "tool_use");
+      convo.push({ role: "assistant", content: turn });
+      const results: Anthropic.Beta.Messages.BetaToolResultBlockParam[] = await Promise.all(
         toolUses.map(async (t) => {
           try {
             return { type: "tool_result" as const, tool_use_id: t.id, content: await runTool(t.name, t.input) };

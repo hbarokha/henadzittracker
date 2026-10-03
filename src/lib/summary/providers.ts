@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { FALLBACK_BETA, REFUSAL_FALLBACKS } from "@/lib/claudeFallback";
 
 // ── Gemini structured output ──────────────────────────────────────────────────
 
@@ -215,8 +216,11 @@ const CLAUDE_SCHEMA = {
   required: ["biologicalAge", "today", "week", "month", "training", "supplements", "recommendations"],
 };
 
-// Opus-tier reasoning is the point of using Claude here; override via env if desired.
-const CLAUDE_SUMMARY_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-opus-4-8";
+// Sonnet 5.5: measured 24–26s on real data vs 72–84s for Opus 5.5 at standard speed
+// (2026-10-03). Opus runs past the Azure gateway's response cap, and fast mode — the
+// thing that would make Opus quick — is not enabled on this account (limit 0).
+// Override via env, e.g. claude-opus-5-5 once fast mode is available.
+const CLAUDE_SUMMARY_MODEL = process.env.ANTHROPIC_SUMMARY_MODEL || "claude-sonnet-5-5";
 
 // Thinking/output effort knob. "medium" is plenty for a periodic health summary and is
 // meaningfully cheaper/faster than the API default ("high"); raise via env if the
@@ -238,15 +242,15 @@ const TOTAL_TIMEOUT_MS = Number(process.env.ANTHROPIC_SUMMARY_TIMEOUT_MS) || 70_
 const GEMINI_RESERVE_MS = 22_000;
 
 // Fast mode (research preview): same Opus model at up to 2.5× output tokens/sec, at
-// premium pricing. Only Opus 4.7/4.8 support it — if the model is overridden to
-// something else (e.g. claude-sonnet-5) we silently run at standard speed instead of
-// erroring on every request. Disable with ANTHROPIC_SUMMARY_FAST=0.
-const FAST_MODE_MODELS = /^claude-opus-4-(7|8)/;
+// premium pricing. Only Opus 5.5 / 5 / 4.8 support it (4.7's was removed) — if the
+// model is overridden to something else (e.g. claude-sonnet-5-5) we silently run at
+// standard speed instead of erroring on every request. Disable with ANTHROPIC_SUMMARY_FAST=0.
+const FAST_MODE_MODELS = /^claude-opus-(5-5|5|4-8)$/;
 const CLAUDE_FAST_MODE =
   process.env.ANTHROPIC_SUMMARY_FAST !== "0" && FAST_MODE_MODELS.test(CLAUDE_SUMMARY_MODEL);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callClaudeJSON(system: string, prompt: string, apiKey: string, budgetMs: number): Promise<any> {
+async function callClaudeJSON(system: string, prompt: string, apiKey: string, budgetMs: number): Promise<{ data: any; model: string }> {
   const client = new Anthropic({ apiKey }); // SDK auto-retries 429/5xx (max_retries=2)
   // One wall-clock deadline shared across attempts so a fast→standard retry can't
   // blow past the platform gateway timeout.
@@ -271,16 +275,17 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string, bu
       system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }],
       messages: [{ role: "user" as const, content: prompt }],
     };
-    // Fast mode requires the beta messages endpoint + beta flag + top-level speed param.
-    // maxRetries: 0 on the fast attempt — fast mode has its own quota (orgs without
-    // access get an immediate 429), and the useful retry is the standard-speed
-    // fallback below, not the SDK re-sending the same fast request with backoff.
+    // Both paths use the beta endpoint for the server-side refusal fallback. Fast mode
+    // adds its own beta flag + top-level speed param. maxRetries: 0 on the fast attempt
+    // — fast mode has its own quota (orgs without access get an immediate 429), and the
+    // useful retry is the standard-speed attempt below, not the SDK re-sending the same
+    // fast request with backoff.
     const stream = fast
       ? client.beta.messages.stream(
-          { ...params, speed: "fast", betas: ["fast-mode-2026-02-01"] },
+          { ...params, speed: "fast", fallbacks: REFUSAL_FALLBACKS, betas: ["fast-mode-2026-02-01", FALLBACK_BETA] },
           { maxRetries: 0 }
         )
-      : client.messages.stream(params);
+      : client.beta.messages.stream({ ...params, fallbacks: REFUSAL_FALLBACKS, betas: [FALLBACK_BETA] });
 
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
@@ -314,18 +319,14 @@ async function callClaudeJSON(system: string, prompt: string, apiKey: string, bu
   }
 
   if (msg.stop_reason === "refusal") throw new Error("Claude declined the request");
-  // Beta (fast) and non-beta messages carry structurally identical text blocks, but TS
-  // can't call array methods on the BetaContentBlock[] | ContentBlock[] union.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const blocks = msg.content as any[];
-  const text = blocks
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .filter((b: any) => b.type === "text")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((b: any) => b.text)
+  // After a mid-output fallback the JSON is split across text blocks on either side of
+  // the `fallback` marker (the fallback model continues the partial), so join them all.
+  const text = msg.content
+    .filter((b): b is Anthropic.Beta.Messages.BetaTextBlock => b.type === "text")
+    .map((b) => b.text)
     .join("");
   if (!text) throw new Error("Empty Claude response");
-  return JSON.parse(text);
+  return { data: JSON.parse(text), model: msg.model as string };
 }
 
 // Provider dispatch: Claude primary (best reasoning), Gemini as automatic fallback
@@ -344,9 +345,12 @@ export async function generateSummary(system: string, prompt: string): Promise<a
       // Claude gets the budget minus a reserve for one Gemini attempt (when a
       // fallback exists); with no Gemini key it can use the entire budget.
       const claudeBudget = Math.max(10_000, geminiKey ? TOTAL_TIMEOUT_MS - GEMINI_RESERVE_MS : TOTAL_TIMEOUT_MS);
-      const data = await callClaudeJSON(system, prompt, anthropicKey, claudeBudget);
+      const served = await callClaudeJSON(system, prompt, anthropicKey, claudeBudget);
+      const data = served.data;
       data.provider = "Claude";
-      data.model = CLAUDE_SUMMARY_MODEL;
+      // The model that actually served it — differs from the requested one when a
+      // refusal was rescued by the server-side fallback.
+      data.model = served.model;
       data.effort = CLAUDE_SUMMARY_EFFORT;
       data.generationMs = Date.now() - started;
       return data;
