@@ -3,6 +3,7 @@ import { getActivityNames, resolveActivityName } from "@/lib/activityNames";
 import { createHash } from "crypto";
 import { getEntriesInRange } from "@/lib/db";
 import { loadServerGoals } from "@/lib/goalsStore";
+import { getSyncStatus } from "@/lib/garminSyncStatus";
 import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceStats, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule, isScheduledOn } from "@/lib/schedule";
@@ -62,6 +63,11 @@ async function readSummaryCache(date: string, bracket: TimeBracket): Promise<Cac
 async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown, dataHash: string, coreHash: string): Promise<void> {
   await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data, dataHash, coreHash });
 }
+
+const isServerTodayStr = (d: string) => {
+  const n = new Date();
+  return d === `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+};
 
 // ── route ─────────────────────────────────────────────────────────────────────
 
@@ -168,11 +174,23 @@ export async function POST(req: Request) {
   // already supplies, and predate the "before bedtime" slot;
   // v5: blood work + schedule-aware adherence — v4 answers were blind to lab values and
   // read non-daily supplements as missed doses)
+  // If the Garmin sync is failing or has gone quiet, today's wearable numbers are older than
+  // they look. Say so, so the analysis flags the gap rather than treating them as current.
+  // Only the yes/no goes in the hash (not the hours) or it would change on every call.
+  const sync = await getSyncStatus();
+  const syncAgeMs = sync.lastSuccessAt ? Date.now() - new Date(sync.lastSuccessAt).getTime() : Infinity;
+  const garminStale = isServerTodayStr(today) && sync.lastAttemptAt !== null && (!!sync.lastError || syncAgeMs > 3 * 60 * 60 * 1000);
+  const garminStaleNote = garminStale
+    ? `\n## GARMIN DATA FRESHNESS\n⚠ The Garmin sync is not keeping up${sync.lastError ? ` (${sync.lastError})` : ""}. ` +
+      `Last successful sync: ${sync.lastSuccessAt ? `${Math.round(syncAgeMs / 3600000)}h ago` : "never"}. ` +
+      `Today's wearable figures (steps, stress, Body Battery, resting HR, sleep if it was not logged yet) may be incomplete or old: ` +
+      `mention this once, do not treat them as current, and do not draw conclusions from a number that may simply not have synced yet.\n`
+    : "";
   const dataHash = createHash("sha256").update(JSON.stringify(
     // activityNames.overrides is part of the hash: renaming a session changes what
     // the prompt says without changing any underlying metric, so without it the
     // cache would keep serving an analysis that still uses the old Garmin labels.
-    { promptVersion: 6, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp, activityNames: activityNames.overrides },
+    { promptVersion: 6, garminStale, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence, monSnaps, todayBodyComp, userMetrics, monWeights, manualComp, activityNames: activityNames.overrides },
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
@@ -312,7 +330,7 @@ ${manualComp
   ? `Manually logged (${manualComp.date}): Weight: ${na(manualComp.weightKg, " kg")} | Body fat: ${na(manualComp.bodyFatPct, "%")} | Muscle mass: ${na(manualComp.muscleMassKg, " kg")} | Body water: ${na(manualComp.bodyWaterPct, "%")} | Bone mass: ${na(manualComp.boneMassKg, " kg")}`
   : "No manually-logged body composition"}
 
-## CALORIE & MACRO GOALS${clientGoals ? " (user-configured)" : " (defaults)"}
+${garminStaleNote}## CALORIE & MACRO GOALS${clientGoals ? " (user-configured)" : " (defaults)"}
 Goal: ${clientGoals?.calories ?? tdee ?? 2000} kcal | Protein: ${clientGoals?.protein ?? 150} g | Carbs: ${clientGoals?.carbs ?? 250} g | Fat: ${clientGoals?.fat ?? 65} g
 ${prevBlock}
 ---

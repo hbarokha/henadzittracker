@@ -16,6 +16,7 @@ import SupplementPlanner from "@/components/SupplementPlanner";
 import WeightChart     from "@/components/WeightChart";
 import GarminDashboard from "@/components/GarminDashboard";
 import GarminConnectModal from "@/components/GarminConnectModal";
+import GarminSyncBanner from "@/components/GarminSyncBanner";
 import HealthSummaryPanel from "@/components/HealthSummaryPanel";
 import BioAgeChart     from "@/components/BioAgeChart";
 import BodyBatteryChart from "@/components/BodyBatteryChart";
@@ -710,6 +711,7 @@ export default function Home() {
             ) : garminStatus.connected ? (
               <section>
                 <SectionHead label="Vitals — Garmin Connect" />
+                <GarminSyncBanner onSynced={() => setGarminRefreshKey((k) => k + 1)} />
                 <GarminDashboard
                   date={selectedDate}
                   foodCalories={totals.calories}

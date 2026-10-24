@@ -344,9 +344,27 @@ const TODAY_CACHE_FRESH_MS = 60 * 1000;
 // the scheduled job. A plain read (dashboard cards, trend charts, AI prompts) serves what the
 // last sync stored, so opening a page never fans out 14 live Garmin calls. A document that
 // does not exist yet is still fetched, so browsing a never-synced day backfills it.
-const liveRefresh = new AsyncLocalStorage<true>();
-export function withLiveRefresh<T>(fn: () => Promise<T>): Promise<T> {
-  return liveRefresh.run(true, fn);
+const liveRefresh = new AsyncLocalStorage<{ errors: Record<string, string> }>();
+
+/**
+ * Run `fn` as a live refresh and also return what went wrong, per section. The fetchers
+ * swallow Garmin errors and fall back to the cache (a stale card beats a broken one), which
+ * is exactly why a failing sync used to be invisible — this is where the reason is kept.
+ */
+export async function runLiveRefresh<T>(fn: () => Promise<T>): Promise<{ result: T; errors: Record<string, string> }> {
+  const store = { errors: {} as Record<string, string> };
+  const result = await liveRefresh.run(store, fn);
+  return { result, errors: store.errors };
+}
+
+function noteLiveError(section: string, e: unknown) {
+  const store = liveRefresh.getStore();
+  if (store && !store.errors[section]) store.errors[section] = e instanceof Error ? e.message : String(e);
+}
+
+/** Is `date` the server's today — the only day a sync result says anything about freshness. */
+export function isServerToday(date: string): boolean {
+  return date === isoToday();
 }
 
 async function shouldFetch(date: string, key: string): Promise<boolean> {
@@ -517,7 +535,8 @@ export async function fetchDaily(date: string): Promise<GarminDaily | null> {
     };
     await writeCache(date, "daily", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("daily", e);
     return readCache<GarminDaily>(date, "daily");
   }
 }
@@ -550,7 +569,8 @@ export async function fetchSleep(date: string): Promise<GarminSleep | null> {
     };
     await writeCache(date, "sleep", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("sleep", e);
     return readCache<GarminSleep>(date, "sleep");
   }
 }
@@ -574,7 +594,8 @@ export async function fetchHeartRate(
     };
     await writeCache(date, "heartrate", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("heartrate", e);
     return readCache<GarminHeartRate>(date, "heartrate");
   }
 }
@@ -610,7 +631,8 @@ export async function fetchActivities(date: string): Promise<GarminActivity[]> {
     }));
     await writeCache(date, "activities", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("activities", e);
     return (await readCache<GarminActivity[]>(date, "activities")) ?? [];
   }
 }
@@ -638,7 +660,8 @@ export async function fetchBodyComp(
     };
     await writeCache(date, "bodycomp", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("bodycomp", e);
     return readCache<GarminBodyComp>(date, "bodycomp");
   }
 }
@@ -751,7 +774,8 @@ export async function fetchHRV(date: string): Promise<GarminHRV | null> {
     };
     await writeCache(date, "hrv", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("hrv", e);
     return readCache<GarminHRV>(date, "hrv");
   }
 }
@@ -795,7 +819,8 @@ export async function fetchStressData(date: string): Promise<GarminStress | null
     };
     await writeCache(date, "stress", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("stress", e);
     return readCache<GarminStress>(date, "stress");
   }
 }
@@ -849,7 +874,8 @@ export async function fetchBodyBattery(date: string): Promise<GarminBodyBattery 
     };
     await writeCache(date, "bodybattery", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("bodybattery", e);
     return readCache<GarminBodyBattery>(date, "bodybattery");
   }
 }
@@ -887,7 +913,8 @@ export async function fetchRespiration(date: string): Promise<GarminRespiration 
     };
     await writeCache(date, "respiration", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("respiration", e);
     return readCache<GarminRespiration>(date, "respiration");
   }
 }
@@ -920,7 +947,8 @@ export async function fetchSpO2(date: string): Promise<GarminSpO2 | null> {
     };
     await writeCache(date, "spo2", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("spo2", e);
     return readCache<GarminSpO2>(date, "spo2");
   }
 }
@@ -973,7 +1001,8 @@ export async function fetchBloodPressure(date: string): Promise<GarminBloodPress
     };
     await writeCache(date, "bloodpressure", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("bloodpressure", e);
     return readCache<GarminBloodPressure>(date, "bloodpressure");
   }
 }
@@ -1014,7 +1043,8 @@ export async function fetchEpochs(date: string): Promise<GarminEpochs | null> {
     const result: GarminEpochs = { date, points, syncedAt: new Date().toISOString() };
     await writeCache(date, "epochs", result);
     return result;
-  } catch {
+  } catch (e) {
+    noteLiveError("epochs", e);
     return readCache<GarminEpochs>(date, "epochs");
   }
 }
