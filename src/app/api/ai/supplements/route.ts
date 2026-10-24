@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getAdherenceStats, type Supplement, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule } from "@/lib/schedule";
-import { getAllEntries } from "@/lib/db";
+import { getRecentEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
 import { readJson } from "@/lib/storage";
 import { heartbeatJson } from "@/lib/heartbeat";
@@ -244,7 +244,7 @@ Rules:
       const [profile, allSupps, allEntries, weightRows, labPanels, daily, sleep, hrv, userMetrics, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
-        getAllEntries(),
+        getRecentEntries(30),
         getRecentWeightEntries(35),
         getLabPanels(),
         readGarminCache("daily"),
@@ -453,7 +453,7 @@ ${DOSAGE_OVERLAP_RULES}
       const [profile, allSupps, allEntries, labPanels, daily, sleep, hrv, bodyComp, stress, trainingStatus, bloodPressure] = await Promise.all([
         loadProfile(),
         getAllSupplements(),
-        getAllEntries(),
+        getRecentEntries(30),
         getLabPanels(),
         readGarminCache("daily"),
         readGarminCache("sleep"),

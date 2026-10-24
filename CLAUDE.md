@@ -344,7 +344,9 @@ src/
     labs-catalog.ts                 Biomarker catalog, unit conversion, range interpretation, formatLabsForPrompt (client-safe)
     labs.ts                         Lab panel persistence (data/labs.json); re-exports labs-catalog for server callers
 data/
-  log.json                          Persisted food log (git-ignored)
+  log.json                          LEGACY food log — now one document per day in food-log/YYYY-MM-DD.json; still read for dates without one until POST /api/log {action:"migrate-log"} empties it (git-ignored)
+  food-log/YYYY-MM-DD.json          Food entries for one day (DbEntry[]); written by lib/db.ts
+  supplement-log/YYYY-MM-DD.json    Supplement check-offs for one day (SupplementLog[]); legacy rows in supplements.json are read until POST /api/supplements {action:"migrate-log"}
   profile.json                      User profile (git-ignored)
   supplements.json                  Supplement library + daily log (git-ignored)
   garmin-session/

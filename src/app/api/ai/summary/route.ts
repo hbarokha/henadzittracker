@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActivityNames, resolveActivityName } from "@/lib/activityNames";
 import { createHash } from "crypto";
-import { getAllEntries } from "@/lib/db";
+import { getEntriesInRange } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceStats, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule, isScheduledOn } from "@/lib/schedule";
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
 
   const [suppLog, allEntries, profile, supplements, weightRows, labPanels, activityNames] = await Promise.all([
     getLogForDate(today), // pure read — virtual backfill, never writes
-    getAllEntries(),
+    getEntriesInRange(mon30Start, today),
     loadProfile(),
     getAllSupplements(),
     getRecentWeightEntries(35),

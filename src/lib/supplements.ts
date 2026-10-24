@@ -1,4 +1,4 @@
-import { readJson, writeJson, mutateJson } from "@/lib/storage";
+import { readJson, readManyJson, writeJson, mutateJson } from "@/lib/storage";
 import type { TimeOfDay } from "@/lib/timeOfDay";
 import { isScheduledOn, countScheduledDays, type SupplementSchedule } from "@/lib/schedule";
 import { computeStock, type Inventory, type StockStatus } from "@/lib/inventory";
@@ -69,7 +69,7 @@ const dayDoc = (date: string) => `supplement-log/${date}.json`;
  * The per-day reads run in parallel.
  */
 async function loadLogs(data: SupplementsData, dates: string[]): Promise<Map<string, SupplementLog[]>> {
-  const days = await Promise.all(dates.map((d) => readJson<SupplementLog[]>(dayDoc(d))));
+  const days = await readManyJson<SupplementLog[]>(dates.map(dayDoc));
   const out = new Map<string, SupplementLog[]>();
   dates.forEach((d, i) => out.set(d, days[i] ?? data.log.filter((l) => l.date === d)));
   return out;

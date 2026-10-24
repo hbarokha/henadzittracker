@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllEntries } from "@/lib/db";
+import { getEntriesInRange } from "@/lib/db";
 import { FOODS } from "@/lib/foods";
 import type { DbEntry } from "@/lib/db";
 
@@ -17,17 +17,22 @@ function resolveCalories(entry: DbEntry): number {
 }
 
 export async function GET() {
-  let entries: DbEntry[] = [];
-  try { entries = await getAllEntries(); } catch {}
-
-  const dateMap = new Map<string, number>();
-  for (const e of entries) {
-    dateMap.set(e.date, (dateMap.get(e.date) ?? 0) + resolveCalories(e));
-  }
-
   const today = new Date();
+  const dateMap = new Map<string, number>();
+  const load = async (fromAgo: number, toAgo: number) => {
+    const from = new Date(today); from.setDate(from.getDate() - fromAgo);
+    const to = new Date(today); to.setDate(to.getDate() - toAgo);
+    let entries: DbEntry[] = [];
+    try { entries = await getEntriesInRange(isoDate(from), isoDate(to)); } catch {}
+    for (const e of entries) dateMap.set(e.date, (dateMap.get(e.date) ?? 0) + resolveCalories(e));
+  };
+
+  // Read the log 30 days at a time and only go further back while the streak is still
+  // unbroken, so a normal request touches 30 documents rather than the whole history.
   let streak = 0;
+  let loadedTo = -1;                       // days-ago of the oldest day loaded so far
   for (let i = 0; i < 365; i++) {
+    if (i > loadedTo) { await load(i + 29, i); loadedTo = i + 29; }
     const d = new Date(today);
     d.setDate(d.getDate() - i);
     if (dateMap.has(isoDate(d))) streak++;

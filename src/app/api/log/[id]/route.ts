@@ -3,12 +3,14 @@ import { deleteLogEntry, updateLogEntry, type LogEntryPatch, type MealCategory }
 
 const CATS = new Set(["breakfast", "lunch", "dinner", "snack"]);
 
+// ?date=YYYY-MM-DD is a hint for which day's document holds the entry; without it the
+// entry is found by scanning, which still works but reads every day.
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const ok = await deleteLogEntry(id);
+  const ok = await deleteLogEntry(id, new URL(request.url).searchParams.get("date") ?? undefined);
   return ok
     ? NextResponse.json({ success: true })
     : NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -27,6 +29,6 @@ export async function PATCH(
     mealCategory: body.mealCategory && CATS.has(body.mealCategory) ? (body.mealCategory as MealCategory) : undefined,
     food: body.food,
   };
-  const updated = await updateLogEntry(id, patch);
+  const updated = await updateLogEntry(id, patch, new URL(request.url).searchParams.get("date") ?? undefined);
   return updated ? NextResponse.json({ success: true }) : NextResponse.json({ error: "Not found" }, { status: 404 });
 }

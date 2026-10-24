@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getLogByDate, addLogEntry, type CustomFood, type MealCategory } from "@/lib/db";
+import { getLogByDate, addLogEntry, migrateLegacyFoodLog, type CustomFood, type MealCategory } from "@/lib/db";
 import { FOODS } from "@/lib/foods";
 
 function resolveFood(entry: { foodId?: number; customFood?: CustomFood }) {
@@ -30,12 +30,15 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  let body: { foodId?: number; customFood?: CustomFood; date?: string; quantity?: number; mealCategory?: string };
+  let body: { action?: string; foodId?: number; customFood?: CustomFood; date?: string; quantity?: number; mealCategory?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // One-off: move the legacy log.json list into per-day documents
+  if (body.action === "migrate-log") return NextResponse.json({ ok: true, ...(await migrateLegacyFoodLog()) });
 
   const { foodId, customFood, date, quantity, mealCategory } = body;
 

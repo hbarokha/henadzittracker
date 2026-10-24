@@ -359,7 +359,7 @@ export default function Home() {
 
   async function removeFood(id: string) {
     const removed = entries.find((e) => e.id === id);
-    const res = await fetch(`/api/log/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/log/${id}?date=${removed?.date ?? selectedDate}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) { showToast("Couldn't remove that — try again"); return; }
     setEntries((prev) => prev.filter((e) => e.id !== id));
     fetchStats();
@@ -380,7 +380,7 @@ export default function Home() {
   }
 
   async function editEntry(id: string, patch: EntryPatch) {
-    const res = await fetch(`/api/log/${id}`, {
+    const res = await fetch(`/api/log/${id}?date=${entries.find((e) => e.id === id)?.date ?? selectedDate}`, {
       method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
     });
     if (!res.ok) { showToast("Couldn't save the change — try again"); throw new Error("edit failed"); }

@@ -289,3 +289,52 @@ export async function deleteBlob(name: string): Promise<void> {
   const p = localPath(name);
   try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
 }
+
+// ── Bulk helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Read many documents at once; the result lines up with `names` (null = missing).
+ * On Cosmos this is one query per partition (per 100 names) rather than one round trip
+ * per document, which is what makes per-day documents cheap to read as a range.
+ */
+export async function readManyJson<T>(names: string[]): Promise<(T | null)[]> {
+  if (!USE_COSMOS) return Promise.all(names.map((n) => readJson<T>(n)));
+
+  const found = new Map<string, unknown>();
+  const byPk = new Map<string, string[]>();
+  for (const n of names) {
+    const { id, pk } = cosmosKey(n);
+    (byPk.get(pk) ?? byPk.set(pk, []).get(pk)!).push(id);
+  }
+  const c = await cosmos();
+  await Promise.all([...byPk].flatMap(([pk, ids]) =>
+    Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100)).map(async (chunk) => {
+      const { resources } = await c.items
+        .query({ query: "SELECT c.id, c.data FROM c WHERE c.pk = @pk AND ARRAY_CONTAINS(@ids, c.id)",
+                 parameters: [{ name: "@pk", value: pk }, { name: "@ids", value: chunk }] },
+               { partitionKey: pk })
+        .fetchAll();
+      for (const r of resources as { id: string; data?: unknown }[]) found.set(r.id, r.data);
+    })));
+  return names.map((n) => (found.get(cosmosKey(n).id) as T | undefined) ?? null);
+}
+
+/** Names of every document under `prefix/` (e.g. "food-log" → "food-log/2026-10-24.json"). */
+export async function listNames(prefix: string): Promise<string[]> {
+  if (USE_COSMOS) {
+    const { resources } = await (await cosmos()).items
+      .query({ query: "SELECT c.id FROM c WHERE c.pk = @pk AND STARTSWITH(c.id, @p)",
+               parameters: [{ name: "@pk", value: prefix.split("/")[0] }, { name: "@p", value: prefix.replace(/\//g, "|") + "|" }] },
+             { partitionKey: prefix.split("/")[0] })
+      .fetchAll();
+    return (resources as { id: string }[]).map((r) => r.id.replace(/\|/g, "/"));
+  }
+  if (USE_BLOB) {
+    const out: string[] = [];
+    for await (const b of container().listBlobsFlat({ prefix: prefix + "/" })) out.push(b.name);
+    return out;
+  }
+  const dir = localPath(prefix);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).map((f) => `${prefix}/${f}`);
+}

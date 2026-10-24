@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAllEntries } from "@/lib/db";
+import { getEntriesInRange } from "@/lib/db";
 import { buildSnapshots, shiftDate, dateRange } from "@/lib/summary/snapshots";
 
 // GET /api/trends?date=YYYY-MM-DD&days=N (7–31)
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "date required (YYYY-MM-DD)" }, { status: 400 });
 
   const dates = dateRange(shiftDate(date, -(days - 1)), date);
-  const entries = await getAllEntries();
+  const entries = await getEntriesInRange(dates[0], dates[dates.length - 1]);
   const snaps = await buildSnapshots(dates, entries);
 
   const rows = snaps.map((s) => ({

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { FALLBACK_BETA, REFUSAL_FALLBACKS, echoableContent } from "@/lib/claudeFallback";
-import { getAllEntries } from "@/lib/db";
+import { getLogByDate, getEntriesInRange } from "@/lib/db";
 import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getDailyView } from "@/lib/supplements";
 import { getLabPanels, latestMarkers, describeRange } from "@/lib/labs";
@@ -106,9 +106,9 @@ async function runTool(name: string, input: any): Promise<string> {
       if ((GARMIN_SECTIONS as readonly string[]).includes(s)) {
         out[s] = await readGarminCache(date, s);
       } else if (s === "food") {
-        const entries = await getAllEntries();
+        const entries = await getLogByDate(date);
         out.food = entries
-          .filter((e) => e.date === date && e.customFood)
+          .filter((e) => e.customFood)
           .map((e) => ({
             meal: e.mealCategory ?? "snack",
             name: e.customFood!.name,
@@ -137,7 +137,7 @@ async function runTool(name: string, input: any): Promise<string> {
       return JSON.stringify({ error: "Invalid date range" });
     const dates = dateRange(start_date, end_date);
     if (dates.length > 31) return JSON.stringify({ error: "Range too large — max 31 days" });
-    const entries = await getAllEntries();
+    const entries = await getEntriesInRange(start_date, end_date);
     const snaps = await buildSnapshots(dates, entries);
     const summary = summarizePeriod(snaps);
     const days = snaps.map((s) => ({
