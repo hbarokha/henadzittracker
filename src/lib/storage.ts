@@ -124,6 +124,7 @@ export async function readJson<T>(name: string): Promise<T | null> {
 
 export async function writeJson(name: string, data: unknown): Promise<void> {
   if (USE_COSMOS) {
+    inflight.delete(name); // a read started after this write must not share a pre-write result
     await (await cosmos()).items.upsert(cosmosEnvelope(name, { data }));
     return;
   }
@@ -337,4 +338,39 @@ export async function listNames(prefix: string): Promise<string[]> {
   const dir = localPath(prefix);
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).map((f) => `${prefix}/${f}`);
+}
+
+// ── Read coalescing ───────────────────────────────────────────────────────────
+
+const COALESCE_MS = 4;
+const inflight = new Map<string, Promise<unknown>>();
+let queue: { name: string; resolve: (v: unknown) => void }[] = [];
+let timer: ReturnType<typeof setTimeout> | null = null;
+
+function flushQueue() {
+  const batch = queue;
+  queue = [];
+  timer = null;
+  readManyJson<unknown>(batch.map((b) => b.name)).then(
+    (vals) => batch.forEach((b, i) => b.resolve(vals[i])),
+    () => batch.forEach((b) => b.resolve(null)), // same contract as readJson: a failed read is "missing"
+  );
+}
+
+/**
+ * readJson for callers that issue many small reads (the Garmin per-day cache): every read
+ * made within a few milliseconds — from one Promise.all, or from the dashboard's dozen
+ * concurrent routes — is merged into a single Cosmos query, and concurrent reads of the
+ * same document share one result. Other backends read directly, as before.
+ */
+export function readJsonCoalesced<T>(name: string): Promise<T | null> {
+  if (!USE_COSMOS) return readJson<T>(name);
+  const pending = inflight.get(name);
+  if (pending) return pending as Promise<T | null>;
+  const p = new Promise<unknown>((resolve) => {
+    queue.push({ name, resolve });
+    timer ??= setTimeout(flushQueue, COALESCE_MS);
+  }).finally(() => { if (inflight.get(name) === p) inflight.delete(name); });
+  inflight.set(name, p);
+  return p as Promise<T | null>;
 }

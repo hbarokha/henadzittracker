@@ -1,10 +1,10 @@
-import { readJson } from "@/lib/storage";
+import { readJsonCoalesced } from "@/lib/storage";
 import type { DbEntry } from "@/lib/db";
 
 // ── date + math helpers ───────────────────────────────────────────────────────
 
 export async function readGarminCache<T>(date: string, key: string): Promise<T | null> {
-  return readJson<T>(`garmin-cache/${date}-${key}.json`);
+  return readJsonCoalesced<T>(`garmin-cache/${date}-${key}.json`);
 }
 
 export function shiftDate(iso: string, days: number): string {

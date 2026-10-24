@@ -8,7 +8,7 @@ import path from "path";
 import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
-import { readJson, writeJson, readText, writeText, blobExists, deleteBlob } from "@/lib/storage";
+import { readJson, readJsonCoalesced, writeJson, readText, writeText, blobExists, deleteBlob } from "@/lib/storage";
 
 // Temp dir on local FS for the garmin-connect library's file I/O.
 // os.tmpdir() works on Windows (local dev) and Linux (Azure Functions).
@@ -317,7 +317,7 @@ function cacheKey(date: string, key: string) {
 }
 
 async function readCache<T>(date: string, key: string): Promise<T | null> {
-  return readJson<T>(cacheKey(date, key));
+  return readJsonCoalesced<T>(cacheKey(date, key));
 }
 
 async function writeCache<T>(date: string, key: string, data: T): Promise<void> {

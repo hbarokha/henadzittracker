@@ -4,7 +4,7 @@ import { getAllSupplements, getAdherenceStats, type Supplement, type AdherenceSt
 import { describeSchedule } from "@/lib/schedule";
 import { getRecentEntries } from "@/lib/db";
 import { getRecentWeightEntries } from "@/lib/weight-db";
-import { readJson } from "@/lib/storage";
+import { readJsonCoalesced as readJson } from "@/lib/storage";
 import { heartbeatJson } from "@/lib/heartbeat";
 import { lookupIngredients } from "@/lib/ingredientLookup";
 import { formatIngredientLedger, TOP_UP_RULES } from "@/lib/ingredientLedger";
