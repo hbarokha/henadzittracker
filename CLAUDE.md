@@ -205,7 +205,7 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 | Language    | TypeScript                                          |
 | Styling     | Tailwind CSS 3                                      |
 | Font        | Bebas Neue / Syne / DM Sans / DM Mono (Google Fonts via next/font) |
-| Persistence | JSON file locally; Azure Blob Storage in production  |
+| Persistence | JSON file locally; Azure Cosmos DB (serverless) in production — Blob Storage still supported as a legacy backend |
 | AI (summary)| Claude (`@anthropic-ai/sdk`, default `claude-sonnet-5-5`; chat + label lookup `claude-opus-5-5`) — Gemini fallback |
 | AI (other)  | Gemini 2.5 Flash (REST API) — food text/photo/barcode, supplements |
 | Garmin      | Unofficial Garmin Connect API (`garmin-connect` npm + MFA patch) |
@@ -223,6 +223,7 @@ Garmin credentials are entered in-app. OAuth tokens are stored in `data/garmin-s
 | `ANTHROPIC_SUMMARY_FAST`          | Fast mode for the Claude summary (default on when the model is Opus 5.5/5/4.8; requires fast mode on the account) — up to 2.5× output speed at premium token pricing; `0` disables. Fast-mode 429 retries once at standard speed |
 | `ANTHROPIC_CHAT_MODEL`            | Claude model for the health-data chat (default `claude-opus-5-5`)  |
 | `ANTHROPIC_INGREDIENTS_MODEL`     | Claude model for the grounded supplement-label lookup (default `claude-opus-5-5`) — uses the `web_search` server tool |
+| `COSMOS_CONNECTION_STRING`        | Azure Cosmos DB connection string — wins over blob when set (`COSMOS_DATABASE` default `henadzittracker`, `COSMOS_CONTAINER` default `docs`) |
 | `AZURE_STORAGE_CONNECTION_STRING` | Azure Blob Storage connection string (empty = local fs mode)   |
 | `AZURE_STORAGE_CONTAINER`         | Blob container name (default: `henadzittracker`)                    |
 

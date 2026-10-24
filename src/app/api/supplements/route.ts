@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceStats, getStockStatuses, getLogForDate, type PlanItem } from "@/lib/supplements";
+import { getAllSupplements, addSupplement, getDailyView, setTaken, updateSupplement, getSupplementHistory, applyWeeklyPlan, getAdherenceStats, getStockStatuses, getLogForDate, migrateLegacyLog, type PlanItem } from "@/lib/supplements";
 import { isTimeOfDay, sanitizeTimeOfDay } from "@/lib/timeOfDay";
 import { normalizeSchedule } from "@/lib/schedule";
 import { shiftDate, dateRange } from "@/lib/summary/snapshots";
@@ -73,6 +73,10 @@ export async function POST(req: Request) {
       schedule: body.schedule === undefined ? undefined : normalizeSchedule(body.schedule),
     });
     return NextResponse.json({ ok: true });
+  }
+  if (body.action === "migrate-log") {
+    // One-off: move the legacy check-off list out of supplements.json into per-day documents
+    return NextResponse.json({ ok: true, ...(await migrateLegacyLog()) });
   }
   if (body.action === "plan") {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

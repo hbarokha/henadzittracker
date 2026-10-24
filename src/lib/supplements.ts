@@ -1,4 +1,4 @@
-import { readJson, mutateJson } from "@/lib/storage";
+import { readJson, writeJson, mutateJson } from "@/lib/storage";
 import type { TimeOfDay } from "@/lib/timeOfDay";
 import { isScheduledOn, countScheduledDays, type SupplementSchedule } from "@/lib/schedule";
 import { computeStock, type Inventory, type StockStatus } from "@/lib/inventory";
@@ -49,11 +49,41 @@ export interface SupplementLog {
 
 interface SupplementsData {
   supplements: Supplement[];
+  /**
+   * LEGACY. Check-offs used to live here as one ever-growing list (2k rows, rewritten on
+   * every tick). They now live one document per day under supplement-log/. Rows left in
+   * this list are still honoured for any date that has no per-day document yet, and
+   * migrateLegacyLog() moves them out.
+   */
   log: SupplementLog[];
 }
 
 const BLOB = "supplements.json";
 const EMPTY: SupplementsData = { supplements: [], log: [] };
+
+const dayDoc = (date: string) => `supplement-log/${date}.json`;
+
+/**
+ * Check-off rows for each date. A per-day document is authoritative once it exists
+ * (even if empty); a date with none falls back to the legacy rows in the library doc.
+ * The per-day reads run in parallel.
+ */
+async function loadLogs(data: SupplementsData, dates: string[]): Promise<Map<string, SupplementLog[]>> {
+  const days = await Promise.all(dates.map((d) => readJson<SupplementLog[]>(dayDoc(d))));
+  const out = new Map<string, SupplementLog[]>();
+  dates.forEach((d, i) => out.set(d, days[i] ?? data.log.filter((l) => l.date === d)));
+  return out;
+}
+
+/** Every date from `from` to `to`, inclusive (calendar arithmetic in UTC, so DST can't skip or repeat a day). */
+function dateRange(from: string, to: string): string[] {
+  const out: string[] = [];
+  const end = Date.parse(`${to}T00:00:00Z`);
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end; t += 86_400_000) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
 
 // Pure read — never writes. All mutations go through mutateJson so concurrent
 // read-modify-write cycles can't silently drop each other's data (ETag-conditional
@@ -104,9 +134,12 @@ export async function getStockStatuses(
   const withStock = supplements.filter((s) => s.inventory);
   if (!withStock.length) return {};
   const data = await loadData();
+  // Only check-offs since the earliest recorded bottle matter.
+  const from = withStock.map((s) => s.inventory!.asOf).sort()[0];
+  const logs = [...(await loadLogs(data, dateRange(from, today))).values()].flat();
   const out: Record<string, StockStatus> = {};
   for (const s of withStock) {
-    const taken = data.log.filter((l) => l.taken && l.supplementId === s.id).map((l) => l.date);
+    const taken = logs.filter((l) => l.taken && l.supplementId === s.id).map((l) => l.date);
     out[s.id] = computeStock(s.inventory!, s.pills ?? 1, s.schedule, taken, today);
   }
   return out;
@@ -121,9 +154,17 @@ export async function deleteSupplement(id: string, date?: string): Promise<void>
     const s = data.supplements.find((x) => x.id === id);
     if (!s) return { write: false };
     s.active = false;
-    if (date) data.log = data.log.filter((l) => !(l.supplementId === id && l.date === date));
     return { write: true };
   });
+  if (date) {
+    const seed = (await loadLogs(await loadData(), [date])).get(date)!;
+    await mutateJson<SupplementLog[]>(dayDoc(date), seed, (rows) => {
+      const kept = rows.filter((l) => l.supplementId !== id);
+      if (kept.length === rows.length) return { write: false };
+      rows.splice(0, rows.length, ...kept);
+      return { write: true };
+    });
+  }
 }
 
 // Log rows for a date, for the currently-active stack. Pure read: entries that don't
@@ -134,7 +175,7 @@ export async function getLogForDate(date: string): Promise<SupplementLog[]> {
   const data = await loadData();
   const active = data.supplements.filter((s) => s.active);
   const activeIds = new Set(active.map((s) => s.id));
-  const log = data.log.filter((l) => l.date === date && activeIds.has(l.supplementId));
+  const log = (await loadLogs(data, [date])).get(date)!.filter((l) => activeIds.has(l.supplementId));
   for (const s of active) {
     if (!log.some((l) => l.supplementId === s.id)) {
       log.push({ supplementId: s.id, date, taken: false, takenAt: null });
@@ -169,15 +210,16 @@ export async function getDailyView(date: string): Promise<{ supplements: Supplem
   // (b) Anything taken on this date whose record still has a name — keeps checked items
   //     visible even if now inactive (dropped by a weekly-plan change or removed).
   const namedIds = new Set(data.supplements.filter(named).map((s) => s.id));
+  const dayLog = (await loadLogs(data, [date])).get(date)!;
   const takenIds = new Set(
-    data.log
-      .filter((l) => l.date === date && l.taken && namedIds.has(l.supplementId))
+    dayLog
+      .filter((l) => l.taken && namedIds.has(l.supplementId))
       .map((l) => l.supplementId)
   );
 
   const displayIds = new Set<string>([...eligibleActive.map((s) => s.id), ...takenIds]);
   const supplements = data.supplements.filter((s) => displayIds.has(s.id));
-  const log = data.log.filter((l) => l.date === date && displayIds.has(l.supplementId));
+  const log = dayLog.filter((l) => displayIds.has(l.supplementId));
 
   // Virtual backfill — this is a pure read. Unchecked rows for the eligible stack are
   // synthesized in the response, not persisted; setTaken() creates the real entry on the
@@ -210,10 +252,9 @@ export async function getAdherenceStats(
   dates: string[]
 ): Promise<Record<string, AdherenceStat>> {
   const data = await loadData();
-  const dateSet = new Set(dates);
   const takenByDate = new Map<string, Set<string>>();
-  for (const l of data.log) {
-    if (!l.taken || !dateSet.has(l.date)) continue;
+  for (const l of [...(await loadLogs(data, dates)).values()].flat()) {
+    if (!l.taken) continue;
     let set = takenByDate.get(l.supplementId);
     if (!set) takenByDate.set(l.supplementId, (set = new Set()));
     set.add(l.date);
@@ -236,22 +277,24 @@ export async function getAdherenceStats(
 // feeds the deterministic correlation-insights engine.
 export async function getTakenDatesBySupplement(dates: string[]): Promise<Record<string, string[]>> {
   const data = await loadData();
-  const dateSet = new Set(dates);
   const map: Record<string, string[]> = {};
-  for (const l of data.log) {
-    if (l.taken && dateSet.has(l.date)) (map[l.supplementId] ??= []).push(l.date);
+  for (const l of [...(await loadLogs(data, dates)).values()].flat()) {
+    if (l.taken) (map[l.supplementId] ??= []).push(l.date);
   }
   return map;
 }
 
 export async function setTaken(supplementId: string, date: string, taken: boolean): Promise<void> {
-  await mutateJson<SupplementsData>(BLOB, EMPTY, (data) => {
-    const entry = data.log.find((l) => l.supplementId === supplementId && l.date === date);
+  // Only this day's document is rewritten. If the day predates the split it is seeded
+  // from the legacy rows, so nothing already checked off that day is lost.
+  const seed = (await loadLogs(await loadData(), [date])).get(date)!;
+  await mutateJson<SupplementLog[]>(dayDoc(date), seed, (rows) => {
+    const entry = rows.find((l) => l.supplementId === supplementId);
     if (entry) {
       entry.taken = taken;
       entry.takenAt = taken ? new Date().toISOString() : null;
     } else {
-      data.log.push({ supplementId, date, taken, takenAt: taken ? new Date().toISOString() : null });
+      rows.push({ supplementId, date, taken, takenAt: taken ? new Date().toISOString() : null });
     }
     return { write: true };
   });
@@ -317,6 +360,8 @@ export async function getSupplementHistory(recentDays = 14): Promise<PlanCandida
     recent.add(isoLocalDate(d));
   }
 
+  const recentLog = [...(await loadLogs(data, [...recent])).values()].flat();
+
   const groups = new Map<string, Supplement[]>();
   for (const s of data.supplements) {
     const name = (s.name ?? "").trim();
@@ -332,7 +377,7 @@ export async function getSupplementHistory(recentDays = 14): Promise<PlanCandida
     entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const canonical = entries[entries.length - 1];
     const ids = new Set(entries.map((e) => e.id));
-    const recentTaken = data.log.filter((l) => ids.has(l.supplementId) && recent.has(l.date) && l.taken).length;
+    const recentTaken = recentLog.filter((l) => ids.has(l.supplementId) && l.taken).length;
     const active = entries.some((e) => e.active);
     const recentScheduled = countScheduledDays(canonical.schedule, [...recent]);
     result.push({
@@ -434,4 +479,30 @@ export async function applyWeeklyPlan(items: PlanItem[]): Promise<{ activeCount:
     return { write: true, result: { activeCount: keep.size } };
   });
   return result!;
+}
+
+/**
+ * Move the legacy check-off list out of supplements.json into per-day documents, then
+ * empty it. Safe to re-run, and safe while the app is live: a date that already has a
+ * per-day document is left alone (it is authoritative and may have been edited since),
+ * and the legacy list is only cleared after every day has been written.
+ */
+export async function migrateLegacyLog(): Promise<{ days: number; rows: number }> {
+  const data = await loadData();
+  const byDate = new Map<string, SupplementLog[]>();
+  for (const l of data.log) {
+    const arr = byDate.get(l.date);
+    if (arr) arr.push(l); else byDate.set(l.date, [l]);
+  }
+  let days = 0;
+  for (const [date, rows] of byDate) {
+    if ((await readJson<SupplementLog[]>(dayDoc(date))) !== null) continue;
+    await writeJson(dayDoc(date), rows);
+    days++;
+  }
+  await mutateJson<SupplementsData>(BLOB, EMPTY, (d) => {
+    d.log = [];
+    return { write: true };
+  });
+  return { days, rows: data.log.length };
 }
