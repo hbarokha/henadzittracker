@@ -174,7 +174,7 @@ the official developer program is currently suspended as of 2024).
 
 ### Scheduled refresh
 - **Opening a page never starts AI or live-Garmin work.** The Analysis panel and the correlation card only read what is cached (`GET /api/ai/summary/cached?full=1`, `GET /api/insights?cacheOnly=1`); Generate/Refresh buttons start a run. Today's Garmin cache is refreshed from Garmin only inside `withLiveRefresh()` (the sync route), never by a plain read
-- `.github/workflows/scheduled-refresh.yml` (GitHub Actions, hourly 04–21 UTC, also `workflow_dispatch`) runs Garmin sync → `/api/ai/summary` → `/api/insights` for the Europe/Amsterdam date. Static Web Apps has no timers
+- `.github/workflows/scheduled-refresh.yml` (GitHub Actions, every 30 min 04:00–21:59 UTC, also `workflow_dispatch`) runs Garmin sync → `/api/ai/summary` → `/api/insights` for the Europe/Amsterdam date. Static Web Apps has no timers
 - **Model calls happen only on meaningful change.** The summary keeps the full data hash plus a `coreHash` (meals, supplement check-offs, weight, labs, profile/goals, nightly sleep/HRV, workouts, BP); if only live Garmin drift differs, the cached analysis is served for up to 3 h. Insights uses the same 3 h rule. A manual Refresh bypasses both
 - Macro goals are mirrored to `goals.json` (`/api/goals`) so the scheduled run, which has no browser, grades against the real targets
 
