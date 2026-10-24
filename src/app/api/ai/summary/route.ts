@@ -21,7 +21,13 @@ interface CachedSummary {
   generatedAt: string;
   data: unknown;
   dataHash?: string;
+  /** Hash of only the inputs that carry real news (see coreHash below) */
+  coreHash?: string;
 }
+
+// When the only thing that changed is live Garmin drift (steps, stress, Body Battery tick
+// over every hour), the cached analysis is still right — wait this long before redoing it.
+const DRIFT_REGEN_MS = 3 * 60 * 60 * 1000;
 
 type TimeBracket = "morning" | "afternoon" | "evening" | "night";
 
@@ -53,8 +59,8 @@ async function readSummaryCache(date: string, bracket: TimeBracket): Promise<Cac
   return readJson<CachedSummary>(`summary-cache/${date}-${bracket}.json`);
 }
 
-async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown, dataHash: string): Promise<void> {
-  await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data, dataHash });
+async function writeSummaryCache(date: string, bracket: TimeBracket, data: unknown, dataHash: string, coreHash: string): Promise<void> {
+  await writeJson(`summary-cache/${date}-${bracket}.json`, { generatedAt: new Date().toISOString(), data, dataHash, coreHash });
 }
 
 // ── route ─────────────────────────────────────────────────────────────────────
@@ -170,6 +176,30 @@ export async function POST(req: Request) {
     (k, v) => (k === "syncedAt" ? undefined : v)
   )).digest("hex");
   if (cached && cached.dataHash === dataHash) {
+    return cachedPayload(cached);
+  }
+
+  // The full hash above includes live Garmin figures that move every hour, so on its own it
+  // would send nearly every scheduled run to the model. coreHash keeps only inputs that mean
+  // something happened: meals, supplement check-offs, weight, labs, profile/goals, the nightly
+  // sleep and HRV result, workouts and blood pressure. If just the drifting numbers differ,
+  // the cached analysis stands until it is DRIFT_REGEN_MS old.
+  const coreHash = createHash("sha256").update(JSON.stringify(
+    {
+      promptVersion: 6, profile, labPanels, goals: clientGoals ?? null, supplements, suppLog, weekAdherence, monAdherence,
+      days: monSnaps.map((d) => ({
+        date: d.date,
+        food: d.food,
+        sleep: d.sleep ? { score: d.sleep.sleepScore, total: d.sleep.totalSleepSeconds } : null,
+        hrv: d.hrv ? { night: d.hrv.lastNight ?? d.hrv.nightlyAvgHrv, status: d.hrv.hrvStatus ?? d.hrv.status } : null,
+        workouts: (d.activities ?? []).map((a: { activityId?: number; trainingLoad?: number | null }) => [a?.activityId, a?.trainingLoad]),
+        bp: d.bloodpressure ? [d.bloodpressure.avgSystolic, d.bloodpressure.avgDiastolic] : null,
+      })),
+      todayBodyComp, userMetrics, monWeights, manualComp, activityNames: activityNames.overrides,
+    },
+    (k, v) => (k === "syncedAt" ? undefined : v)
+  )).digest("hex");
+  if (cached?.coreHash === coreHash && Date.now() - new Date(cached.generatedAt).getTime() < DRIFT_REGEN_MS) {
     return cachedPayload(cached);
   }
 
@@ -419,7 +449,7 @@ Weight trend: ${weightChange != null
     hrv:   weekSnaps.filter((s) => (s.hrv?.lastNight ?? s.sleep?.avgNightlyHrv) != null).length,
   };
 
-  await writeSummaryCache(date, bracket, result, dataHash);
+  await writeSummaryCache(date, bracket, result, dataHash, coreHash);
   // Pointer to the most recent analysis — read back as coach memory on the next run
   await writeJson("summary-cache/latest.json", { generatedAt: new Date().toISOString(), date, data: result });
   // Durable bio-age series for the trend chart (upsert per date, best-effort)

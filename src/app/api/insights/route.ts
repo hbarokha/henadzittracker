@@ -203,6 +203,11 @@ export async function GET(req: Request) {
     if (cached && cached.dataHash === dataHash) {
       return NextResponse.json({ ...cached, cached: true });
     }
+    // The table's deltas shift a little every hour as today's recovery numbers fill in; a
+    // narration under 3 hours old still describes it, so don't pay for a new one yet.
+    if (cached && Date.now() - new Date(cached.generatedAt).getTime() < 3 * 60 * 60 * 1000) {
+      return NextResponse.json({ ...cached, correlations, cached: true, stale: true });
+    }
   }
 
   if (!correlations.length) {
