@@ -58,7 +58,7 @@ export default function CorrelationInsights({
     setLoading(true);
     setError(null);
     try {
-      const resp = await fetch(`/api/insights?date=${date}${force ? "&force=1" : ""}`);
+      const resp = await fetch(`/api/insights?date=${date}${force ? "&force=1" : "&cacheOnly=1"}`);
       const raw = await resp.text();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let json: any;

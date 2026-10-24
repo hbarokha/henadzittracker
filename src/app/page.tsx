@@ -32,7 +32,7 @@ import MetricCompareChart from "@/components/MetricCompareChart";
 import TrainingTab      from "@/components/TrainingTab";
 import type { NutritionFood } from "@/lib/gemini";
 import type { MealCategory }  from "@/lib/db";
-import { loadGoals, saveGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
+import { loadGoals, saveGoals, hasStoredGoals, DEFAULT_GOALS, type Goals } from "@/lib/goals";
 import { IconFlame, IconBolt } from "@/components/icons";
 
 type AppTab = "overview" | "nutrition" | "training" | "supplements" | "analysis";
@@ -310,6 +310,14 @@ export default function Home() {
 
   useEffect(() => {
     setGoals(loadGoals());
+    // The scheduled analysis reads goals from the server. Adopt the server copy if there is
+    // one; otherwise publish this browser's goals so the first scheduled run already has them.
+    fetch("/api/goals").then((r) => r.json()).then((g: Goals | null) => {
+      if (g && typeof g.calories === "number") { saveGoals(g); setGoals(g); }
+      else if (hasStoredGoals()) {
+        fetch("/api/goals", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(loadGoals()) }).catch(() => {});
+      }
+    }).catch(() => {});
     fetch("/api/garmin/status")
       .then((r) => r.json())
       .then(setGarminStatus)
@@ -419,7 +427,10 @@ export default function Home() {
     return copied;
   }
 
-  function handleSaveGoals(g: Goals) { saveGoals(g); setGoals(g); }
+  function handleSaveGoals(g: Goals) {
+    saveGoals(g); setGoals(g);
+    fetch("/api/goals", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }).catch(() => {});
+  }
 
   async function handleGarminConnected() {
     setShowGarminConnect(false);

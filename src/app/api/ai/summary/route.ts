@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getActivityNames, resolveActivityName } from "@/lib/activityNames";
 import { createHash } from "crypto";
 import { getEntriesInRange } from "@/lib/db";
+import { loadServerGoals } from "@/lib/goalsStore";
 import { loadProfile, calculateBMR, calculateTDEE, coachNotesLine } from "@/lib/profile";
 import { getAllSupplements, getLogForDate, getAdherenceStats, type AdherenceStat } from "@/lib/supplements";
 import { describeSchedule, isScheduledOn } from "@/lib/schedule";
@@ -59,13 +60,15 @@ async function writeSummaryCache(date: string, bracket: TimeBracket, data: unkno
 // ── route ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
-  const { date, force, time: clientTime, goals: clientGoals } = await req.json();
+  const { date, force, time: clientTime, goals: bodyGoals } = await req.json();
   if (!date) return NextResponse.json({ error: "date required" }, { status: 400 });
 
   if (!process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY)
     return NextResponse.json({ error: "No AI API key set (ANTHROPIC_API_KEY or GEMINI_API_KEY)" }, { status: 500 });
 
   // Derive time bracket from client-supplied HH:MM, or fall back to server clock
+  // The scheduled run has no browser to send goals; use the copy the page mirrored to the server.
+  const clientGoals = bodyGoals ?? (await loadServerGoals());
   const timeStr: string = clientTime ?? `${String(new Date().getHours()).padStart(2, "0")}:${String(new Date().getMinutes()).padStart(2, "0")}`;
   const bracket: TimeBracket = timeBracketFromHour(parseInt(timeStr.split(":")[0], 10));
   const dayPct = Math.round((parseInt(timeStr.split(":")[0], 10) * 60 + parseInt(timeStr.split(":")[1] ?? "0", 10)) / 1440 * 100);

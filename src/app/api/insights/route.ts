@@ -145,6 +145,9 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const date = url.searchParams.get("date");
   const force = url.searchParams.get("force") === "1";
+  // Opening the card must not start an AI call: return the table (cheap, deterministic) with
+  // whatever narration is already cached. The scheduled job and the recompute button omit this.
+  const cacheOnly = url.searchParams.get("cacheOnly") === "1";
   if (!date) return NextResponse.json({ error: "date required" }, { status: 400 });
 
   const dates = dateRange(shiftDate(date, -(WINDOW_DAYS - 1)), date);
@@ -184,6 +187,17 @@ export async function GET(req: Request) {
 
   const dataHash = createHash("sha256").update(JSON.stringify(correlations)).digest("hex");
   const cacheKey = `insights-cache/${date}.json`;
+  if (cacheOnly && !force) {
+    const cached = await readJson<CachedInsights>(cacheKey);
+    return NextResponse.json({
+      generatedAt: cached?.generatedAt ?? null,
+      narrative: cached?.narrative ?? null,
+      suggestions: cached?.suggestions ?? [],
+      correlations,
+      cached: true,
+      stale: !!cached && cached.dataHash !== dataHash,
+    });
+  }
   if (!force) {
     const cached = await readJson<CachedInsights>(cacheKey);
     if (cached && cached.dataHash === dataHash) {

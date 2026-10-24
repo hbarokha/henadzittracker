@@ -22,6 +22,10 @@ export function loadGoals(): Goals {
   return DEFAULT_GOALS;
 }
 
+export function hasStoredGoals(): boolean {
+  try { return localStorage.getItem(KEY) !== null; } catch { return false; }
+}
+
 export function saveGoals(g: Goals): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(g));

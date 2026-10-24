@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { GarminConnect } from "garmin-connect";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { HttpClient } = require("garmin-connect/dist/common/HttpClient");
@@ -339,10 +340,20 @@ function isoToday(): string {
 // duplicate bursts — Cloudflare on sso.garmin.com rate-limits aggressive patterns.
 const TODAY_CACHE_FRESH_MS = 60 * 1000;
 
+// Today's cache is refreshed from Garmin only inside withLiveRefresh() — the sync route and
+// the scheduled job. A plain read (dashboard cards, trend charts, AI prompts) serves what the
+// last sync stored, so opening a page never fans out 14 live Garmin calls. A document that
+// does not exist yet is still fetched, so browsing a never-synced day backfills it.
+const liveRefresh = new AsyncLocalStorage<true>();
+export function withLiveRefresh<T>(fn: () => Promise<T>): Promise<T> {
+  return liveRefresh.run(true, fn);
+}
+
 async function shouldFetch(date: string, key: string): Promise<boolean> {
   const cached = await readCache<{ syncedAt?: string }>(date, key);
   if (cached === null) return true;
   if (date !== isoToday()) return false;
+  if (!liveRefresh.getStore()) return false;
   const syncedMs = cached.syncedAt ? new Date(cached.syncedAt).getTime() : 0;
   return Date.now() - syncedMs > TODAY_CACHE_FRESH_MS;
 }

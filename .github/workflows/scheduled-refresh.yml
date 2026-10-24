@@ -1,0 +1,58 @@
+name: Scheduled refresh
+
+# Hourly background refresh so opening the app only has to READ results:
+#   1. sync today's Garmin data into the cache
+#   2. regenerate the AI health summary   (the route skips the model when the data hash is unchanged)
+#   3. regenerate the correlation insights (same hash check)
+#
+# Azure Static Web Apps has no timers, so GitHub Actions is the scheduler. Cron runs in UTC;
+# 04:07-21:07 UTC is 06:07-23:07 in summer and 05:07-22:07 in winter for Europe/Amsterdam.
+
+on:
+  schedule:
+    - cron: "7 4-21 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: scheduled-refresh
+  cancel-in-progress: false
+
+env:
+  APP_URL: https://happy-dune-0620c5803.7.azurestaticapps.net
+  TZ: Europe/Amsterdam
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Work out the user's local date and time
+        id: now
+        run: |
+          echo "date=$(date +%F)" >> "$GITHUB_OUTPUT"
+          echo "time=$(date +%H:%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Sync Garmin
+        run: |
+          curl -sS --max-time 120 -X POST "$APP_URL/api/garmin/sync" \
+            -H "Content-Type: application/json" \
+            -d '{"date":"${{ steps.now.outputs.date }}"}' -o sync.json -w "sync: HTTP %{http_code}\n"
+          head -c 200 sync.json; echo
+        # A failed sync (Garmin down, session expired) must not stop the analysis of what is cached
+        continue-on-error: true
+
+      - name: Health summary (only calls the model if the data changed)
+        run: |
+          curl -sS --max-time 240 -X POST "$APP_URL/api/ai/summary" \
+            -H "Content-Type: application/json" \
+            -d '{"date":"${{ steps.now.outputs.date }}","time":"${{ steps.now.outputs.time }}"}' \
+            -o summary.json -w "summary: HTTP %{http_code} in %{time_total}s\n"
+          # The route streams whitespace and reports failures in the body with HTTP 200
+          if grep -q '"error"' summary.json; then head -c 400 summary.json; echo; exit 1; fi
+          grep -o '"cached":[a-z]*' summary.json | head -1 || true
+
+      - name: Correlation insights (only calls the model if the table changed)
+        run: |
+          curl -sS --max-time 150 "$APP_URL/api/insights?date=${{ steps.now.outputs.date }}" \
+            -o insights.json -w "insights: HTTP %{http_code} in %{time_total}s\n"
+          if grep -q '"error"' insights.json; then head -c 400 insights.json; echo; exit 1; fi

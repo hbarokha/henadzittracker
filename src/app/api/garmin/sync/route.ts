@@ -3,7 +3,7 @@ import {
   fetchDaily, fetchSleep, fetchHeartRate, fetchActivities, fetchBodyComp,
   fetchHRV, fetchStressData, fetchBodyBattery, fetchRespiration,
   fetchSpO2, fetchEpochs, fetchTrainingStatus, fetchBloodPressure,
-  fetchUserMetrics, isConnected,
+  fetchUserMetrics, isConnected, withLiveRefresh,
 } from "@/lib/garmin";
 
 export async function POST(req: Request) {
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   if (!date) return NextResponse.json({ ok: false, error: "date required" }, { status: 400 });
 
   const [daily, sleep, heartrate, activities, bodycomp, hrv, stress, bodybattery, respiration, spo2, epochs, trainingstatus, bloodpressure, usermetrics] =
-    await Promise.allSettled([
+    await withLiveRefresh(() => Promise.allSettled([
       fetchDaily(date),
       fetchSleep(date),
       fetchHeartRate(date),
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
       fetchTrainingStatus(date),
       fetchBloodPressure(date),
       fetchUserMetrics(date),
-    ]);
+    ]));
 
   return NextResponse.json({
     ok: true,

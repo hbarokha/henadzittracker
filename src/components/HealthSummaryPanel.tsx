@@ -465,17 +465,21 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
     setLoading(true);
   }, [date]);
 
+  // Opening the panel only READS the last analysis. Generation is the scheduled job's work
+  // (hourly, and only when the underlying data changed) or an explicit Refresh/Generate
+  // press — a page load must never start a 60-90s AI run on its own.
   useEffect(() => {
-    if (!ready) {
-      // Keep the loading state visible while Garmin data is still being fetched,
-      // but don't wait forever — if the Garmin load hangs or its callback is lost,
-      // fall back to generating from whatever cache exists.
-      setLoading(true);
-      const fallback = setTimeout(() => generate(false), 25_000);
-      return () => clearTimeout(fallback);
-    }
-    generate(false);
-  }, [generate, ready]);
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const r = await fetch(`/api/ai/summary/cached?date=${date}&full=1`, { signal: ac.signal });
+        const d = await r.json();
+        if (!ac.signal.aborted && d?.summary) setSummary(d.summary as HealthSummary);
+      } catch { /* nothing cached or offline — the idle state offers Generate */ }
+      finally { if (!ac.signal.aborted) setLoading(false); }
+    })();
+    return () => ac.abort();
+  }, [date]);
 
   const overallScore = summary
     ? Math.round((summary.today.score + summary.week.score + summary.month.score) / 3)
@@ -534,7 +538,7 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
             </button>
           )}
           {!summary && !loading && (
-            <button onClick={() => generate(false)} disabled={loading}
+            <button onClick={() => generate(true)} disabled={loading}
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-50"
               style={{ background: "rgba(139,92,246,0.15)", color: "#a78bfa", border: "1px solid rgba(139,92,246,0.25)" }}>
               Generate Summary
@@ -587,11 +591,11 @@ export default function HealthSummaryPanel({ date, onSyncGarmin, ready = true, g
         <div className="px-5 py-8 text-center space-y-2">
           <IconDna className="w-8 h-8 mx-auto" style={{ color: "var(--violet)" }} />
           <p className="text-sm font-medium" style={{ color: "var(--text)", fontFamily: "var(--font-display)" }}>
-            Get your personalized health analysis
+            No analysis yet for this day
           </p>
           <p className="text-xs max-w-sm mx-auto" style={{ color: "var(--text-dim)" }}>
-            Combines food log, Garmin activity, sleep, HRV, supplements, and weight data
-            to give you conclusions for today, this week, and this month.
+            It refreshes on its own every hour when your data changes. Press Generate Summary
+            to sync Garmin and run it now.
           </p>
         </div>
       )}
