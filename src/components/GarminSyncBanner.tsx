@@ -6,6 +6,7 @@ interface SyncStatus {
   lastAttemptAt: string | null;
   lastSuccessAt: string | null;
   lastError: string | null;
+  lastErrorDetail?: string | null;
 }
 
 // The scheduled job runs from 06:00 to 23:00 local, every 30 min. Past this age during those
@@ -75,6 +76,7 @@ export default function GarminSyncBanner({ onSynced }: { onSynced: () => void })
         <p className="text-[10px] mt-1" style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
           {sync.lastSuccessAt ? `last good sync ${clock(sync.lastSuccessAt)}` : "no successful sync recorded"}
           {retryError ? ` · ${retryError}` : ""}
+          {sync.lastErrorDetail ? ` · ${sync.lastErrorDetail.slice(0, 80)}` : ""}
         </p>
       </div>
       <button onClick={syncNow} disabled={busy}

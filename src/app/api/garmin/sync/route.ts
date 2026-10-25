@@ -19,7 +19,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Not connected" }, { status: 401 });
   }
   if (tracked && !(await getClient())) {
-    await recordSync(explainSyncError("saved session could not be restored"));
+    console.warn("garmin sync: saved session could not be restored from storage");
+    await recordSync("The saved Garmin session could not be loaded. Reconnect Garmin (tap the Garmin icon, sign in, enter the MFA code).", "getClient() returned null");
   }
 
   // A dead session or an unreachable Garmin makes these calls hang rather than fail. Without a
@@ -52,7 +53,10 @@ export async function POST(req: Request) {
   // (the watch has not uploaded the night yet) and optional sections (no scale, no BP cuff)
   // fail by design; a dead session or an unreachable Garmin always takes `daily` down too.
   const critical = errors.daily;
-  if (tracked && critical) await recordSync(explainSyncError(critical));
+  if (tracked && critical) {
+    console.warn("garmin sync: daily failed:", critical);
+    await recordSync(explainSyncError(critical), critical);
+  }
   else if (tracked && (await getClient())) await recordSync(null);
 
   return NextResponse.json({

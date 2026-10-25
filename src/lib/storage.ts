@@ -109,7 +109,14 @@ function localPath(name: string) {
 
 export async function readJson<T>(name: string): Promise<T | null> {
   if (USE_COSMOS) {
-    try { return ((await cosmosRead(name))?.data as T | undefined) ?? null; } catch { return null; }
+    try {
+      const doc = await cosmosRead(name);
+      if (doc?.data !== undefined) return doc.data as T;
+      // A name written with writeText() holds a string even when it ends in .json (the Garmin
+      // token files do); reading it back as JSON must still work.
+      if (typeof doc?.text === "string") { try { return JSON.parse(doc.text) as T; } catch { return null; } }
+      return null;
+    } catch { return null; }
   }
   if (USE_BLOB) {
     try {
@@ -237,7 +244,13 @@ export async function mutateJson<T, R = void>(
 
 export async function readText(name: string): Promise<string | null> {
   if (USE_COSMOS) {
-    try { return (await cosmosRead(name))?.text ?? null; } catch { return null; }
+    try {
+      const doc = await cosmosRead(name);
+      if (typeof doc?.text === "string") return doc.text;
+      // The mirror case: a .json file migrated or written as structured data. Without this the
+      // Garmin tokens read back as "missing" and every live Garmin call was silently skipped.
+      return doc?.data !== undefined ? JSON.stringify(doc.data) : null;
+    } catch { return null; }
   }
   if (USE_BLOB) {
     try {
