@@ -1,18 +1,14 @@
-name: Scheduled refresh
+name: Manual refresh
 
-# Background refresh every 30 minutes so opening the app only has to READ results:
-#   1. sync today's Garmin data into the cache
-#   2. regenerate the AI health summary   (the route skips the model when the data hash is unchanged)
-#   3. regenerate the correlation insights (same hash check)
+# Manual fallback for the background refresh (sync Garmin -> AI summary -> correlation insights).
 #
-# Azure Static Web Apps has no timers, so GitHub Actions is the scheduler. Cron runs in UTC;
-# :07 and :37 from 04:00 to 21:59 UTC is 06:07-23:37 in summer and 05:07-22:37 in winter for
-# Europe/Amsterdam. Most runs end in about a minute: the AI routes skip the model unless the
-# data meaningfully changed, so the extra frequency mostly buys fresher Garmin data.
+# The scheduled run lives in an Azure Logic App, `health-refresh` in resource group `health-rg`
+# (every 30 min at :07 and :37, 06:00-23:59 Europe/Amsterdam). It replaced a cron trigger here:
+# GitHub throttles scheduled workflows on quiet repositories, and the cron ran only once in the
+# 5 hours before it was moved. This workflow stays so the same three calls can be started by hand
+# from the Actions tab.
 
 on:
-  schedule:
-    - cron: "7,37 4-21 * * *"
   workflow_dispatch:
 
 concurrency:
