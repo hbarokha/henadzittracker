@@ -43,7 +43,9 @@ export default function GarminSyncBanner({ onSynced }: { onSynced: () => void })
       const r = await fetch("/api/garmin/sync", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ date }),
       });
-      if (!r.ok) setRetryError(r.status === 401 ? "Garmin is not connected." : `Sync failed (${r.status}).`);
+      // The route heartbeat-streams, so the status is always 200 and a failure is in the body
+      const body = await r.json().catch(() => null);
+      if (!r.ok || !body || body.ok === false) setRetryError(body?.error ?? `Sync failed (${r.status}).`);
       await load();
       onSynced();
     } catch {

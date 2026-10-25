@@ -81,13 +81,37 @@ function cosmos(): Promise<any> {
   return _cosmos;
 }
 
+/**
+ * Retry a Cosmos call a couple of times on errors that clear themselves: throttling (429),
+ * timeouts, a service blip (5xx), a dropped connection. The file/blob readers used to swallow
+ * every error and report "missing"; the Cosmos paths surface them instead (silently returning
+ * "missing" for a document that exists would let a later write overwrite it), so a transient
+ * failure has to be absorbed here or it becomes a 500 on a page load.
+ */
+async function cosmosRetry<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await fn(); } catch (e) {
+      last = e;
+      const err = e as { code?: number | string; statusCode?: number };
+      const status = typeof err.code === "number" ? err.code : err.statusCode;
+      const transient = status === 429 || status === 408 || status === 449 || (typeof status === "number" && status >= 500)
+        || /ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timeout/i.test(String((e as Error)?.message ?? e));
+      if (!transient) break;
+      await new Promise((r) => setTimeout(r, 150 * 2 ** attempt));
+    }
+  }
+  console.error(`cosmos ${what} failed:`, (last as Error)?.message ?? last);
+  throw last;
+}
+
 function cosmosKey(name: string) {
   return { id: name.replace(/\//g, "|"), pk: name.split("/")[0] };
 }
 
 async function cosmosRead(name: string): Promise<CosmosDoc | null> {
   const { id, pk } = cosmosKey(name);
-  const { resource } = await (await cosmos()).item(id, pk).read();
+  const { resource } = await cosmosRetry(`read ${name}`, async () => (await cosmos()).item(id, pk).read());
   return (resource as CosmosDoc | undefined) ?? null;
 }
 
@@ -323,12 +347,15 @@ export async function readManyJson<T>(names: string[]): Promise<(T | null)[]> {
   const c = await cosmos();
   await Promise.all([...byPk].flatMap(([pk, ids]) =>
     Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100)).map(async (chunk) => {
-      const { resources } = await c.items
-        .query({ query: "SELECT c.id, c.data FROM c WHERE c.pk = @pk AND ARRAY_CONTAINS(@ids, c.id)",
+      const { resources } = await cosmosRetry<{ resources: unknown[] }>(`query ${pk} x${chunk.length}`, () => c.items
+        .query({ query: "SELECT c.id, c.data, c.text FROM c WHERE c.pk = @pk AND ARRAY_CONTAINS(@ids, c.id)",
                  parameters: [{ name: "@pk", value: pk }, { name: "@ids", value: chunk }] },
                { partitionKey: pk })
-        .fetchAll();
-      for (const r of resources as { id: string; data?: unknown }[]) found.set(r.id, r.data);
+        .fetchAll());
+      for (const r of resources as { id: string; data?: unknown; text?: string }[]) {
+        if (r.data !== undefined) found.set(r.id, r.data);
+        else if (typeof r.text === "string") { try { found.set(r.id, JSON.parse(r.text)); } catch { /* not JSON */ } }
+      }
     })));
   return names.map((n) => (found.get(cosmosKey(n).id) as T | undefined) ?? null);
 }

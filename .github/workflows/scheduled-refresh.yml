@@ -39,7 +39,9 @@ jobs:
           curl -sS --max-time 120 -X POST "$APP_URL/api/garmin/sync" \
             -H "Content-Type: application/json" \
             -d '{"date":"${{ steps.now.outputs.date }}"}' -o sync.json -w "sync: HTTP %{http_code}\n"
-          head -c 200 sync.json; echo
+          head -c 300 sync.json; echo
+          # The route streams, so HTTP is always 200 and a failure is reported in the body
+          if grep -q '"ok":false' sync.json; then exit 1; fi
         # A failed sync (Garmin down, session expired) must not stop the analysis of what is cached
         continue-on-error: true
 
