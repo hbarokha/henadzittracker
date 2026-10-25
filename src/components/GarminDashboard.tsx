@@ -154,6 +154,17 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
     } : null
   );
 
+  // When this data was last pulled from Garmin: the newest syncedAt among the cached sections.
+  // A time of day alone is ambiguous once the data is more than a day old, so add the date then.
+  const syncedMs = [daily?.syncedAt, sleep?.syncedAt, heartRate?.syncedAt, stress?.syncedAt]
+    .map((t) => (t ? new Date(t).getTime() : NaN)).filter((t) => !Number.isNaN(t));
+  const lastSynced = syncedMs.length ? new Date(Math.max(...syncedMs)) : null;
+  const syncedLabel = lastSynced
+    ? (lastSynced.toDateString() === new Date().toDateString()
+        ? lastSynced.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : lastSynced.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))
+    : null;
+
   const hasData = sleep || heartRate || activities.length > 0 || bodyComp || effectiveHrv || stress || effectiveBodyBattery
     || effectiveRespiration || effectiveSpo2 || (bloodPressure?.readings?.length ?? 0) > 0;
 
@@ -168,7 +179,9 @@ export default function GarminDashboard({ date, foodCalories, onSyncStart, onSyn
             </svg>
           </div>
           <h2 className="text-sm font-bold text-white">Garmin Data</h2>
-          <span className="text-xs text-gray-500">{date}</span>
+          <span className="text-xs text-gray-500">
+            {date}{syncedLabel && <span title="Last pulled from Garmin"> · synced {syncedLabel}</span>}
+          </span>
         </div>
         <button
           onClick={sync}
